@@ -31,6 +31,8 @@ class WorkerState:
         self.portfolio: dict = {}
         self.lock = asyncio.Lock()
         self.generation = 0
+        self.last_ws_event_at: datetime | None = None
+        self.last_tick_persisted_at: datetime | None = None
 
     async def refresh_portfolio(self) -> None:
         p = load_portfolio()
@@ -113,6 +115,7 @@ async def websocket_loop(state: WorkerState) -> None:
                 s = state.states.setdefault(event.symbol, SymbolState())
                 s.event = event
                 s.recent_marks = (s.recent_marks + [event.mark_price])[-12:]
+                state.last_ws_event_at = datetime.now(timezone.utc)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -140,9 +143,12 @@ async def rest_validation_loop(state: WorkerState) -> None:
                 for symbol, result in zip(symbols, results):
                     if not isinstance(result, Exception):
                         state.states.setdefault(symbol, SymbolState()).open_interest = float(result)
-            _heartbeat("worker-rest", {"symbols": len(state.symbols), "last_validation": datetime.now(timezone.utc).isoformat()})
+            _heartbeat("worker-rest", {
+                "symbols": len(state.symbols),
+                "last_validation": datetime.now(timezone.utc).isoformat(),
+            })
         except Exception as exc:
-            log.warning("REST validation failed: %s", exc)
+            log.warning("REST validation failed: %r", exc)
         await asyncio.sleep(settings.rest_validation_seconds)
 
 
@@ -150,12 +156,15 @@ async def persistence_loop(state: WorkerState) -> None:
     while True:
         now = datetime.now(timezone.utc)
         positions = {x["symbol"].upper(): x for x in state.portfolio.get("positions", [])}
+        persisted_this_cycle = 0
+
         for symbol in list(state.symbols):
             s = state.states.get(symbol)
             if not s or not s.event:
                 continue
             if s.last_persisted_at and (now - s.last_persisted_at).total_seconds() < settings.persist_interval_seconds:
                 continue
+
             check = compare_ws_to_rest(s.event.mark_price, s.rest_price, settings.price_conflict_bps)
             with SessionLocal() as db:
                 db.add(MarketTick(
@@ -172,7 +181,10 @@ async def persistence_loop(state: WorkerState) -> None:
                     received_at=now,
                 ))
                 db.commit()
+
             s.last_persisted_at = now
+            state.last_tick_persisted_at = now
+            persisted_this_cycle += 1
 
             if symbol in positions:
                 decision = evaluate_position(positions[symbol], s)
@@ -180,7 +192,12 @@ async def persistence_loop(state: WorkerState) -> None:
                     severity, details = decision
                     dedupe_key = f"{symbol}:{severity}:{','.join(details['reasons'])}"
                     with SessionLocal() as db:
-                        latest = db.scalar(select(AlertRecord).where(AlertRecord.dedupe_key == dedupe_key).order_by(AlertRecord.created_at.desc()).limit(1))
+                        latest = db.scalar(
+                            select(AlertRecord)
+                            .where(AlertRecord.dedupe_key == dedupe_key)
+                            .order_by(AlertRecord.created_at.desc())
+                            .limit(1)
+                        )
                         if latest:
                             ts = latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)
                             should_write = (now - ts).total_seconds() > 3600
@@ -197,7 +214,15 @@ async def persistence_loop(state: WorkerState) -> None:
                                 dedupe_key=dedupe_key,
                             ))
                             db.commit()
-        _heartbeat("worker-ws", {"symbols": len(state.symbols), "last_persist": now.isoformat()})
+
+        if persisted_this_cycle > 0:
+            _heartbeat("worker-ws", {
+                "symbols": len(state.symbols),
+                "last_ws_event": state.last_ws_event_at.isoformat() if state.last_ws_event_at else None,
+                "last_persist": state.last_tick_persisted_at.isoformat() if state.last_tick_persisted_at else None,
+                "rows_persisted": persisted_this_cycle,
+            })
+
         await asyncio.sleep(1)
 
 
