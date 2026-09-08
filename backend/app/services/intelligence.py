@@ -559,6 +559,7 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
         f"Time: {when_text}\n"
         f"Themes: {', '.join(themes) if themes else '—'}\n"
         f"Affected: {', '.join(assets) if assets else 'broad market / unclassified'}\n"
-        f"Source: {event.source_name}\n\n"
+        f"Source: {event.source_name}\n"
+        f"Source link: {event.source_url}\n\n"
         f"{event.summary[:900] if event.summary else 'New event detected. Thesis impact requires confirmation against market response.'}"
     )
