@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ log = logging.getLogger("thesisguard.intelligence")
 
 BLS_ICS_URL = "https://www.bls.gov/schedule/news_release/bls.ics"
 FED_MONETARY_RSS_URL = "https://www.federalreserve.gov/feeds/press_monetary.xml"
+FOMC_CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 COINMARKETCAL_URL = "https://api.coinmarketcal.com/v2/events"
 
@@ -197,6 +199,80 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
+
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        value = re.sub(r"\s+", " ", data).strip()
+        if value:
+            self.parts.append(value)
+
+    def text(self) -> str:
+        return " ".join(self.parts)
+
+
+def parse_fomc_calendar_html(html_text: str, *, year: int) -> list[NormalizedEvent]:
+    extractor = _TextExtractor()
+    extractor.feed(html_text)
+    text = extractor.text()
+
+    marker = f"{year} FOMC Meetings"
+    if marker not in text:
+        return []
+
+    section = text.split(marker, 1)[1]
+    next_marker = f"{year + 1} FOMC Meetings"
+    if next_marker in section:
+        section = section.split(next_marker, 1)[0]
+
+    month_map = {
+        "January": 1, "February": 2, "March": 3, "April": 4,
+        "May": 5, "June": 6, "July": 7, "August": 8,
+        "September": 9, "October": 10, "November": 11, "December": 12,
+    }
+    pattern = re.compile(
+        r"\b(" + "|".join(month_map) + r")\b\s+(\d{1,2})-(\d{1,2})(\*)?"
+    )
+
+    events: list[NormalizedEvent] = []
+    eastern = ZoneInfo("America/New_York")
+    for match in pattern.finditer(section):
+        month_name, start_day, end_day, sep_flag = match.groups()
+        month = month_map[month_name]
+        end_date = datetime(year, month, int(end_day), 14, 0, tzinfo=eastern).astimezone(timezone.utc)
+        title = f"FOMC meeting conclusion — {month_name} {start_day}-{end_day}, {year}"
+        importance, assets, themes = classify_event("FOMC Federal Reserve interest rate decision", scheduled=True)
+        events.append(NormalizedEvent(
+            canonical_key=f"fomc:{year}:{month:02d}:{int(end_day):02d}",
+            event_kind="macro_calendar",
+            status="scheduled",
+            title=title,
+            summary=(
+                "Federal Open Market Committee scheduled meeting. Event time is modeled "
+                "at the customary 2:00 PM ET statement time on the final meeting day; "
+                "confirm official timing if the Federal Reserve publishes an exception."
+            ),
+            source_name="Federal Reserve",
+            source_url=FOMC_CALENDAR_URL,
+            source_tier=1,
+            confidence="high",
+            importance=importance,
+            event_time=end_date,
+            affected_assets=assets,
+            themes=sorted(set(themes + ["fomc", "monetary_policy"])),
+            metadata={
+                "meeting_start_day": int(start_day),
+                "meeting_end_day": int(end_day),
+                "summary_of_economic_projections": bool(sep_flag),
+                "modeled_statement_time_et": "14:00",
+            },
+        ))
+    return events
 
 
 def parse_rss(xml_text: str, *, source_name: str, event_kind: str = "news") -> list[NormalizedEvent]:
@@ -378,6 +454,15 @@ def parse_coinmarketcal(data: dict) -> list[NormalizedEvent]:
                 "categories": row.get("categories") or [],
             },
         ))
+    return events
+
+
+async def fetch_fomc_calendar(client: httpx.AsyncClient) -> list[NormalizedEvent]:
+    response = await client.get(FOMC_CALENDAR_URL)
+    response.raise_for_status()
+    now = datetime.now(timezone.utc)
+    events = parse_fomc_calendar_html(response.text, year=now.year)
+    events.extend(parse_fomc_calendar_html(response.text, year=now.year + 1))
     return events
 
 
