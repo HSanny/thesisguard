@@ -18,6 +18,10 @@ from .services.telegram import (
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# httpx request INFO logs can expose secret-bearing URLs (Telegram bot tokens live in
+# the path). Keep transport libraries quiet and log only sanitized application events.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("thesisguard.worker")
 
 
