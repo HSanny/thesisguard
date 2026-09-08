@@ -118,6 +118,60 @@ def evaluate_position(position: dict, state: SymbolState) -> tuple[str, dict] | 
     }
 
 
+def evaluate_planned_entry(entry: dict, state: SymbolState) -> tuple[str, str, dict] | None:
+    if not state.event:
+        return None
+    if entry.get("side", "LONG") != "LONG":
+        return None
+
+    price = state.event.mark_price
+    symbol = entry["symbol"].upper()
+    threshold_pct = 2.0
+    state_name = None
+    trigger_desc = None
+    distance_pct = None
+
+    if entry.get("trigger") is not None:
+        trigger = float(entry["trigger"])
+        distance_pct = (price / trigger - 1) * 100
+        if price <= trigger:
+            state_name = "reassess"
+        elif distance_pct <= threshold_pct:
+            state_name = "approaching"
+        trigger_desc = f"{trigger:g}"
+
+    elif entry.get("trigger_lte") is not None:
+        trigger = float(entry["trigger_lte"])
+        distance_pct = (price / trigger - 1) * 100
+        if price <= trigger:
+            state_name = "reassess"
+        elif distance_pct <= threshold_pct:
+            state_name = "approaching"
+        trigger_desc = f"<= {trigger:g}"
+
+    elif entry.get("trigger_range"):
+        low, high = [float(x) for x in entry["trigger_range"]]
+        if low <= price <= high:
+            state_name = "reassess"
+            distance_pct = 0.0
+        elif price > high:
+            distance_pct = (price / high - 1) * 100
+            if distance_pct <= threshold_pct:
+                state_name = "approaching"
+        trigger_desc = f"{low:g}–{high:g}"
+
+    if not state_name:
+        return None
+
+    severity = "yellow" if state_name == "reassess" else "blue"
+    return severity, state_name, {
+        "symbol": symbol,
+        "price": price,
+        "trigger": trigger_desc,
+        "distance_pct": distance_pct,
+    }
+
+
 async def websocket_loop(state: WorkerState) -> None:
     while True:
         await state.refresh_portfolio()
@@ -178,6 +232,9 @@ async def persistence_loop(state: WorkerState) -> None:
     while True:
         now = datetime.now(timezone.utc)
         positions = {x["symbol"].upper(): x for x in state.portfolio.get("positions", [])}
+        planned_entries = {}
+        for item in state.portfolio.get("planned_entries", []):
+            planned_entries.setdefault(item["symbol"].upper(), []).append(item)
         persisted_this_cycle = 0
 
         for symbol in list(state.symbols):
@@ -258,6 +315,52 @@ async def persistence_loop(state: WorkerState) -> None:
                                     "delivered" if delivered else "not delivered",
                                     symbol,
                                 )
+
+
+            for planned in planned_entries.get(symbol, []):
+                planned_decision = evaluate_planned_entry(planned, s)
+                if not planned_decision:
+                    continue
+                severity, entry_state, details = planned_decision
+                dedupe_key = f"planned:{symbol}:{entry_state}:{details['trigger']}"
+                with SessionLocal() as db:
+                    latest = db.scalar(
+                        select(AlertRecord)
+                        .where(AlertRecord.dedupe_key == dedupe_key)
+                        .order_by(AlertRecord.created_at.desc())
+                        .limit(1)
+                    )
+                    should_write = True
+                    if latest:
+                        ts = latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)
+                        should_write = (now - ts).total_seconds() > 6 * 3600
+                    if should_write:
+                        explanation = (
+                            f"Planned entry is {entry_state}. Current mark={details['price']:.8f}; "
+                            f"configured trigger={details['trigger']}. Reassess market structure before entry."
+                        )
+                        db.add(AlertRecord(
+                            severity=severity,
+                            confidence="medium" if entry_state == "reassess" else "low",
+                            symbol=symbol,
+                            title=f"{symbol} planned entry {entry_state}",
+                            explanation=explanation,
+                            evidence_json=json.dumps(details),
+                            dedupe_key=dedupe_key,
+                        ))
+                        db.commit()
+
+                        icon = "🎯" if entry_state == "reassess" else "🔵"
+                        await send_telegram_message(
+                            f"{icon} ThesisGuard Planned Entry\n"
+                            f"Asset: {symbol}\n"
+                            f"State: {entry_state.upper()}\n"
+                            f"Mark price: {details['price']:.8f}\n"
+                            f"Configured trigger: {details['trigger']}\n"
+                            f"Distance: {details['distance_pct']:.2f}%\n\n"
+                            "Reassess structure, leverage and thesis before placing an order. "
+                            "No auto-trading."
+                        )
 
         if persisted_this_cycle > 0:
             _heartbeat("worker-ws", {
