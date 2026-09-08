@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./thesisguard.db"
     binance_fapi_base: str = "https://fapi.binance.com"
-    binance_ws_base: str = "wss://fstream.binance.com/stream?streams="
+    binance_ws_base: str = "wss://fstream.binance.com/market/stream?streams="
     rest_validation_seconds: int = 30
     oi_refresh_seconds: int = 60
     persist_interval_seconds: int = 5
