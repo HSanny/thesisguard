@@ -10,6 +10,12 @@ from .portfolio import load_portfolio, ensure_portfolio_seeded
 from .services.binance import BinanceFuturesClient, BinanceMarkPriceStream, MarkPriceEvent
 from .services.consensus import compare_ws_to_rest
 from .services.risk_engine import Evidence, EvidenceType, assess
+from .services.telegram import (
+    format_alert_message,
+    send_message as send_telegram_message,
+    send_startup_message,
+    telegram_configured,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("thesisguard.worker")
@@ -204,16 +210,38 @@ async def persistence_loop(state: WorkerState) -> None:
                         else:
                             should_write = True
                         if should_write:
+                            explanation = (
+                                "Price signal observed; ThesisGuard does not treat an "
+                                "unconfirmed crossing as thesis invalidation."
+                            )
                             db.add(AlertRecord(
                                 severity=severity,
                                 confidence=details["confidence"],
                                 symbol=symbol,
                                 title=f"{symbol} risk state changed",
-                                explanation="Price signal observed; v0.2 will not treat an unconfirmed crossing as thesis invalidation.",
+                                explanation=explanation,
                                 evidence_json=json.dumps(details),
                                 dedupe_key=dedupe_key,
                             ))
                             db.commit()
+
+                            telegram_text = format_alert_message(
+                                symbol=symbol,
+                                severity=severity,
+                                confidence=details["confidence"],
+                                mark_price=s.event.mark_price,
+                                reasons=details["reasons"],
+                                source_conflict=details["source_conflict"],
+                                spread_bps=details["spread_bps"],
+                                explanation=explanation,
+                            )
+                            delivered = await send_telegram_message(telegram_text)
+                            if settings.telegram_alerts_enabled:
+                                log.info(
+                                    "Telegram alert %s for %s",
+                                    "delivered" if delivered else "not delivered",
+                                    symbol,
+                                )
 
         if persisted_this_cycle > 0:
             _heartbeat("worker-ws", {
@@ -242,6 +270,18 @@ async def main() -> None:
     ensure_portfolio_seeded()
     state = WorkerState()
     await state.refresh_portfolio()
+
+    if settings.telegram_alerts_enabled:
+        if telegram_configured():
+            log.info("Telegram alerts enabled")
+            if settings.telegram_send_startup:
+                delivered = await send_startup_message(len(state.symbols))
+                log.info("Telegram startup notification %s", "delivered" if delivered else "failed")
+        else:
+            log.warning(
+                "TELEGRAM_ALERTS_ENABLED=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing"
+            )
+
     await asyncio.gather(
         websocket_loop(state),
         rest_validation_loop(state),
