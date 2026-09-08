@@ -1,5 +1,5 @@
 import json
-from backend.app.services.binance import parse_mark_price_message
+from backend.app.services.binance import BinanceMarkPriceStream, parse_mark_price_message
 
 
 def test_parse_combined_mark_price_message():
@@ -21,3 +21,10 @@ def test_parse_combined_mark_price_message():
     assert event.mark_price == 12.763
     assert event.index_price == 12.758
     assert event.funding_rate == 0.00001234
+
+
+def test_stream_url_uses_current_usdm_market_endpoint():
+    stream = BinanceMarkPriceStream(["BTCUSDT", "LINKUSDT"])
+    assert stream.url.startswith("wss://fstream.binance.com/market/stream?streams=")
+    assert "btcusdt@markPrice@1s" in stream.url
+    assert "linkusdt@markPrice@1s" in stream.url
