@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     telegram_health_heartbeat_seconds: int = 3600
 
     intelligence_enabled: bool = True
-    intelligence_poll_seconds: int = 300
+    intelligence_poll_seconds: int = 120
     intelligence_calendar_poll_seconds: int = 3600
+    crypto_calendar_poll_seconds: int = 900
     intelligence_store_min_importance: float = 5.0
     intelligence_push_min_importance: float = 7.0
     gdelt_enabled: bool = True
