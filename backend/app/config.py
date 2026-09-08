@@ -17,6 +17,17 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_send_startup: bool = True
+    telegram_feed_health_enabled: bool = True
+    telegram_health_heartbeat_seconds: int = 3600
+
+    intelligence_enabled: bool = True
+    intelligence_poll_seconds: int = 300
+    intelligence_calendar_poll_seconds: int = 3600
+    intelligence_push_min_importance: float = 7.0
+    gdelt_enabled: bool = True
+    gdelt_timespan: str = "30min"
+    gdelt_max_records: int = 50
+    coinmarketcal_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
