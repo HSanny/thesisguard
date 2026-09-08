@@ -28,3 +28,14 @@ def test_stream_url_uses_current_usdm_market_endpoint():
     assert stream.url.startswith("wss://fstream.binance.com/market/stream?streams=")
     assert "btcusdt@markPrice@1s" in stream.url
     assert "linkusdt@markPrice@1s" in stream.url
+
+
+def test_legacy_stream_override_is_migrated_to_market_endpoint():
+    stream = BinanceMarkPriceStream(
+        ["BTCUSDT"],
+        ws_base="wss://fstream.binance.com/stream?streams=",
+    )
+    assert stream.url == (
+        "wss://fstream.binance.com/market/stream?streams="
+        "btcusdt@markPrice@1s"
+    )
