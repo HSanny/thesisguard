@@ -16,6 +16,7 @@ from .services.intelligence import (
     fetch_bls_calendar,
     fetch_coinmarketcal,
     fetch_fed_monetary,
+    fetch_fomc_calendar,
     fetch_gdelt,
     format_event_message,
     immediate_push_candidate,
@@ -517,14 +518,20 @@ async def intelligence_calendar_loop() -> None:
         while True:
             try:
                 events = await fetch_bls_calendar(client)
+                fomc_events = await fetch_fomc_calendar(client)
+                events.extend(fomc_events)
                 created = upsert_events(events)
-                log.info("BLS calendar synchronized: %s event(s), %s new", len(events), len(created))
+                log.info(
+                    "official calendars synchronized: %s event(s), %s new",
+                    len(events),
+                    len(created),
+                )
             except Exception as exc:
                 log.warning("BLS calendar fetch failed: %s", type(exc).__name__)
 
             _heartbeat("worker-calendar", {
                 "last_calendar_poll": datetime.now(timezone.utc).isoformat(),
-                "source": "bls",
+                "sources": ["bls", "fomc"],
             })
             await asyncio.sleep(settings.intelligence_calendar_poll_seconds)
 
