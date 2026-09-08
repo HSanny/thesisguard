@@ -1,0 +1,66 @@
+as_of: "2026-09-08T09:38:00+08:00"
+equity_usdt: 25717
+margin_ratio_pct: 2.32
+positions:
+  - symbol: XAUUSDT
+    side: LONG
+    notional_usdt: 50051
+    entry: 4467.54
+    leverage: 100
+    thesis_tags: [gold, macro, real_yields, dxy, geopolitics]
+    key_levels: [4467.54, 4450, 4440, 4400, 4350, 4300]
+  - symbol: VIRTUALUSDT
+    side: LONG
+    notional_usdt: 9995
+    entry: 0.73295
+    leverage: 25
+    thesis_tags: [ai_agents, high_beta, token_unlocks, liquidity]
+    key_levels: [0.75, 0.73295, 0.70, 0.68, 0.65]
+  - symbol: XRPUSDT
+    side: LONG
+    notional_usdt: 10573
+    entry: 1.4045
+    leverage: 75
+    thesis_tags: [xrpl, etf_flows, rlusd, payments, supply]
+    key_levels: [1.50, 1.45, 1.4045, 1.40, 1.38, 1.35, 1.30]
+  - symbol: XLMUSDT
+    side: LONG
+    notional_usdt: 10444
+    entry: 0.19165
+    leverage: 50
+    thesis_tags: [stellar, stablecoins, rwa, payments]
+    key_levels: [0.20, 0.19165, 0.19, 0.185, 0.18, 0.175]
+  - symbol: LINKUSDT
+    side: LONG
+    notional_usdt: 10500
+    entry: 12.763
+    leverage: 50
+    thesis_tags: [ccip, rwa, banks, swift, reserve, payment_abstraction]
+    key_levels: [13.67, 13.0, 12.763, 12.5, 12.3, 12.0]
+planned_entries:
+  - symbol: ETHUSDT
+    side: LONG
+    notional_usdt: 50000
+    trigger: 2200
+    leverage: 150
+  - symbol: LINKUSDT
+    side: LONG
+    notional_usdt: 20000
+    trigger: 12.5
+  - symbol: VIRTUALUSDT
+    side: LONG
+    notional_usdt_min: 10000
+    notional_usdt_max: 20000
+    trigger: 0.70
+  - symbol: XRPUSDT
+    side: LONG
+    notional_usdt: 20000
+    trigger_lte: 1.40
+  - symbol: XLMUSDT
+    side: LONG
+    notional_usdt: 10000
+    trigger_range: [0.19, 0.191]
+watchlist:
+  - BTCUSDT
+  - ETHUSDT
+  - TAOUSDT
