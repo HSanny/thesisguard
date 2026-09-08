@@ -509,6 +509,7 @@ async def intelligence_news_loop() -> None:
         follow_redirects=True,
         headers={"User-Agent": "ThesisGuard/0.3 market-intelligence"},
     ) as client:
+        last_crypto_calendar_poll: datetime | None = None
         while True:
             collected = []
             try:
@@ -522,9 +523,18 @@ async def intelligence_news_loop() -> None:
                 except Exception as exc:
                     log.warning("GDELT intelligence fetch failed: %s", type(exc).__name__)
 
-            if settings.coinmarketcal_api_key.strip():
+            now = datetime.now(timezone.utc)
+            should_poll_crypto_calendar = (
+                settings.coinmarketcal_api_key.strip()
+                and (
+                    last_crypto_calendar_poll is None
+                    or (now - last_crypto_calendar_poll).total_seconds() >= settings.crypto_calendar_poll_seconds
+                )
+            )
+            if should_poll_crypto_calendar:
                 try:
                     collected.extend(await fetch_coinmarketcal(client))
+                    last_crypto_calendar_poll = now
                 except Exception as exc:
                     log.warning("CoinMarketCal fetch failed: %s", type(exc).__name__)
 
