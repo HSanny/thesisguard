@@ -61,6 +61,29 @@ class ServiceHeartbeat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class IntelligenceEvent(Base):
+    __tablename__ = "intelligence_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    canonical_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    event_kind: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="reported", index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    source_name: Mapped[str] = mapped_column(String(120))
+    source_url: Mapped[str] = mapped_column(Text)
+    source_tier: Mapped[int] = mapped_column(Integer, default=4, index=True)
+    confidence: Mapped[str] = mapped_column(String(16), default="low")
+    importance: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    event_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    affected_assets_json: Mapped[str] = mapped_column(Text, default="[]")
+    themes_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
 normalized_url = _normalize_database_url(settings.database_url)
 connect_args = {"check_same_thread": False} if normalized_url.startswith("sqlite") else {}
 engine = create_engine(normalized_url, connect_args=connect_args, pool_pre_ping=True)
