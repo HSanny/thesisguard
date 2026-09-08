@@ -13,6 +13,7 @@ from .services.consensus import compare_ws_to_rest
 from .services.risk_engine import Evidence, EvidenceType, assess
 from .services.intelligence import (
     already_alerted,
+    annotate_corroboration,
     fetch_bls_calendar,
     fetch_coinmarketcal,
     fetch_fed_monetary,
@@ -528,6 +529,7 @@ async def intelligence_news_loop() -> None:
                     log.warning("CoinMarketCal fetch failed: %s", type(exc).__name__)
 
             if collected:
+                collected = annotate_corroboration(collected)
                 created = upsert_events(collected)
                 if created:
                     log.info("intelligence ingestion created %s new event(s)", len(created))
