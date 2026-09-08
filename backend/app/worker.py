@@ -5,11 +5,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from sqlalchemy import select
 from .config import settings
-from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat
+from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent
 from .portfolio import load_portfolio, ensure_portfolio_seeded
 from .services.binance import BinanceFuturesClient, BinanceMarkPriceStream, MarkPriceEvent
 from .services.consensus import compare_ws_to_rest
 from .services.risk_engine import Evidence, EvidenceType, assess
+from .services.intelligence import (
+    already_alerted,
+    fetch_bls_calendar,
+    fetch_coinmarketcal,
+    fetch_fed_monetary,
+    fetch_gdelt,
+    format_event_message,
+    immediate_push_candidate,
+    record_intelligence_alert,
+    upcoming_stage,
+    upsert_events,
+)
 from .services.telegram import (
     format_alert_message,
     send_message as send_telegram_message,
@@ -269,18 +281,203 @@ async def portfolio_refresh_loop(state: WorkerState) -> None:
         await asyncio.sleep(settings.portfolio_refresh_seconds)
 
 
+async def _push_system_message(text: str) -> bool:
+    if not settings.telegram_alerts_enabled:
+        return False
+    return await send_telegram_message(text)
+
+
+async def market_health_loop(state: WorkerState) -> None:
+    """Push feed-live/stale/recovered status without blocking market collection."""
+    live_announced = False
+    stale_announced = False
+    last_hourly = datetime.now(timezone.utc)
+
+    while True:
+        now = datetime.now(timezone.utc)
+        last_persist = state.last_tick_persisted_at
+
+        if last_persist is not None:
+            age = (now - last_persist).total_seconds()
+
+            if not live_announced:
+                live_announced = True
+                stale_announced = False
+                await _push_system_message(
+                    "✅ ThesisGuard Market Feed LIVE\n"
+                    f"Watching: {len(state.symbols)} symbols\n"
+                    f"Last persisted tick age: {age:.1f}s\n"
+                    "Market collection and PostgreSQL persistence are active."
+                )
+
+            if age > settings.stale_after_seconds and not stale_announced:
+                stale_announced = True
+                await _push_system_message(
+                    "⚠️ ThesisGuard Market Feed STALE\n"
+                    f"No persisted market tick for {int(age)} seconds.\n"
+                    "Risk alerts may be incomplete until the feed recovers."
+                )
+
+            if age <= settings.stale_after_seconds and stale_announced:
+                stale_announced = False
+                await _push_system_message(
+                    "✅ ThesisGuard Market Feed RECOVERED\n"
+                    f"Persistence resumed. Latest tick age: {age:.1f}s."
+                )
+
+            if (
+                settings.telegram_health_heartbeat_seconds > 0
+                and (now - last_hourly).total_seconds() >= settings.telegram_health_heartbeat_seconds
+            ):
+                last_hourly = now
+                await _push_system_message(
+                    "💓 ThesisGuard Health\n"
+                    f"Market feed: {'LIVE' if age <= settings.stale_after_seconds else 'STALE'}\n"
+                    f"Watching: {len(state.symbols)} symbols\n"
+                    f"Last persisted tick age: {age:.1f}s"
+                )
+
+        await asyncio.sleep(10)
+
+
+async def _process_new_intelligence_events(events: list[IntelligenceEvent]) -> None:
+    for event in events:
+        if not immediate_push_candidate(event):
+            continue
+        dedupe_key = f"intel:new:{event.canonical_key}"
+        if already_alerted(dedupe_key):
+            continue
+        explanation = (
+            f"New {event.event_kind} event detected from {event.source_name}; "
+            f"importance={event.importance:.1f}/10, source tier={event.source_tier}."
+        )
+        record_intelligence_alert(event, dedupe_key, explanation)
+        delivered = await send_telegram_message(format_event_message(event))
+        log.info(
+            "intelligence Telegram %s: %s",
+            "delivered" if delivered else "not delivered",
+            event.title[:120],
+        )
+
+
+async def intelligence_news_loop() -> None:
+    if not settings.intelligence_enabled:
+        return
+
+    async with __import__("httpx").AsyncClient(
+        timeout=15.0,
+        follow_redirects=True,
+        headers={"User-Agent": "ThesisGuard/0.3 market-intelligence"},
+    ) as client:
+        while True:
+            collected = []
+            try:
+                collected.extend(await fetch_fed_monetary(client))
+            except Exception as exc:
+                log.warning("Fed intelligence fetch failed: %s", type(exc).__name__)
+
+            if settings.gdelt_enabled:
+                try:
+                    collected.extend(await fetch_gdelt(client))
+                except Exception as exc:
+                    log.warning("GDELT intelligence fetch failed: %s", type(exc).__name__)
+
+            if settings.coinmarketcal_api_key.strip():
+                try:
+                    collected.extend(await fetch_coinmarketcal(client))
+                except Exception as exc:
+                    log.warning("CoinMarketCal fetch failed: %s", type(exc).__name__)
+
+            if collected:
+                created = upsert_events(collected)
+                if created:
+                    log.info("intelligence ingestion created %s new event(s)", len(created))
+                    await _process_new_intelligence_events(created)
+
+            _heartbeat("worker-intel", {
+                "last_news_poll": datetime.now(timezone.utc).isoformat(),
+                "sources": ["fed", "gdelt"] + (["coinmarketcal"] if settings.coinmarketcal_api_key.strip() else []),
+            })
+            await asyncio.sleep(settings.intelligence_poll_seconds)
+
+
+async def intelligence_calendar_loop() -> None:
+    if not settings.intelligence_enabled:
+        return
+
+    import httpx
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        follow_redirects=True,
+        headers={"User-Agent": "ThesisGuard/0.3 market-intelligence"},
+    ) as client:
+        while True:
+            try:
+                events = await fetch_bls_calendar(client)
+                created = upsert_events(events)
+                log.info("BLS calendar synchronized: %s event(s), %s new", len(events), len(created))
+            except Exception as exc:
+                log.warning("BLS calendar fetch failed: %s", type(exc).__name__)
+
+            _heartbeat("worker-calendar", {
+                "last_calendar_poll": datetime.now(timezone.utc).isoformat(),
+                "source": "bls",
+            })
+            await asyncio.sleep(settings.intelligence_calendar_poll_seconds)
+
+
+async def upcoming_event_loop() -> None:
+    """Send 24h, 2h and 15m reminders for high-impact scheduled events."""
+    while True:
+        now = datetime.now(timezone.utc)
+        horizon = now.timestamp() + 24 * 3600
+
+        with SessionLocal() as db:
+            events = db.scalars(
+                select(IntelligenceEvent)
+                .where(IntelligenceEvent.status == "scheduled")
+                .where(IntelligenceEvent.importance >= settings.intelligence_push_min_importance)
+                .order_by(IntelligenceEvent.event_time.asc())
+            ).all()
+
+        for event in events:
+            if event.event_time is None:
+                continue
+            ts = event.event_time if event.event_time.tzinfo else event.event_time.replace(tzinfo=timezone.utc)
+            if ts.timestamp() > horizon:
+                continue
+            stage = upcoming_stage(ts, now)
+            if stage is None:
+                continue
+            dedupe_key = f"intel:upcoming:{event.canonical_key}:{stage}"
+            if already_alerted(dedupe_key):
+                continue
+            explanation = f"Scheduled high-impact event reminder ({stage}) from {event.source_name}."
+            record_intelligence_alert(event, dedupe_key, explanation)
+            delivered = await send_telegram_message(format_event_message(event, stage=stage))
+            log.info(
+                "upcoming event Telegram %s: %s [%s]",
+                "delivered" if delivered else "not delivered",
+                event.title[:120],
+                stage,
+            )
+
+        await asyncio.sleep(60)
+
+
 async def main() -> None:
     init_db()
     ensure_portfolio_seeded()
     state = WorkerState()
     await state.refresh_portfolio()
 
+    background = []
     if settings.telegram_alerts_enabled:
         if telegram_configured():
             log.info("Telegram alerts enabled")
             if settings.telegram_send_startup:
-                delivered = await send_startup_message(len(state.symbols))
-                log.info("Telegram startup notification %s", "delivered" if delivered else "failed")
+                # Never block market collection on Telegram flood control or network errors.
+                background.append(asyncio.create_task(send_startup_message(len(state.symbols))))
         else:
             log.warning(
                 "TELEGRAM_ALERTS_ENABLED=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing"
@@ -291,6 +488,10 @@ async def main() -> None:
         rest_validation_loop(state),
         persistence_loop(state),
         portfolio_refresh_loop(state),
+        market_health_loop(state),
+        intelligence_news_loop(),
+        intelligence_calendar_loop(),
+        upcoming_event_loop(),
     )
 
 
