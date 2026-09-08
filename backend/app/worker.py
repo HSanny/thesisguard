@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -467,7 +468,7 @@ async def intelligence_news_loop() -> None:
     if not settings.intelligence_enabled:
         return
 
-    async with __import__("httpx").AsyncClient(
+    async with httpx.AsyncClient(
         timeout=15.0,
         follow_redirects=True,
         headers={"User-Agent": "ThesisGuard/0.3 market-intelligence"},
@@ -508,7 +509,6 @@ async def intelligence_calendar_loop() -> None:
     if not settings.intelligence_enabled:
         return
 
-    import httpx
     async with httpx.AsyncClient(
         timeout=15.0,
         follow_redirects=True,
