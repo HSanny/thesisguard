@@ -1,54 +1,76 @@
 # Security Policy
 
-ThesisGuard handles market data, portfolio configuration, alert logic, and potentially sensitive deployment credentials. Security issues should be treated as confidential until they are remediated.
+ThesisGuard processes market data, portfolio configuration, monitoring rules,
+and potentially sensitive deployment credentials. Security issues should be
+reported privately.
 
 ## Supported versions
 
-Until public releases are introduced, only the current `main` branch is considered supported.
+Security fixes are applied to the current `main` branch and the currently
+deployed production candidate/version. Experimental branches are not separately
+supported unless explicitly stated.
 
 ## Reporting a vulnerability
 
-Please **do not open a public GitHub issue** for a suspected security vulnerability.
+**Do not open a public GitHub issue for a suspected vulnerability.**
 
-Use one of the following private channels:
+Preferred reporting path:
 
-1. GitHub Private Vulnerability Reporting / Security Advisories for this repository, if enabled.
-2. Contact the repository owner privately through the GitHub account associated with `HSanny/thesisguard`.
+1. Use GitHub's private Security Advisory / vulnerability-reporting workflow for
+   this repository when available.
+2. If that is unavailable, contact the repository owner through an authorized
+   private channel and include only the minimum information required to
+   reproduce the issue.
 
-Include, where possible:
+Please include:
 
-- affected component or endpoint;
-- reproduction steps;
-- impact assessment;
-- proof of concept that does not expose third-party data;
-- suggested mitigation, if known.
+- affected component and version/commit;
+- concise reproduction steps;
+- expected vs. observed behavior;
+- potential impact;
+- any safe proof-of-concept that does not expose third-party data.
 
-## Secrets and credentials
+## Sensitive information
 
-Never commit:
+Never include any of the following in an issue, pull request, screenshot, log,
+or vulnerability report unless an explicitly approved secure channel is being
+used:
 
 - exchange API keys or secrets;
-- Railway/PostgreSQL credentials;
-- Telegram bot tokens;
-- OAuth credentials;
-- JWT signing keys;
-- private webhook secrets;
-- production `.env` files.
+- wallet private keys, seed phrases, signing keys, or recovery material;
+- GitHub, Railway, database, cloud, Telegram, or other access tokens;
+- production database dumps;
+- user credentials or personal account information;
+- proprietary market-monitoring rules or private customer data that are not
+  necessary to demonstrate the vulnerability.
 
-Secrets must be injected through the deployment platform's encrypted environment-variable system.
+If a credential is suspected to have been exposed, rotate or revoke it before
+continuing investigation.
 
-## Trading and execution boundary
+## Deployment and secret handling
 
-ThesisGuard is currently a monitoring and decision-support system. Any future capability that can place, modify, or cancel trades must be isolated behind explicit permissions, independent authentication, audit logging, and kill-switch controls.
+Production secrets must be injected through Railway or another deployment
+platform's encrypted environment-variable system. Production `.env` files,
+database URLs containing credentials, API secrets, and access tokens must never
+be committed to Git.
 
-## Data exposure
+The public API/dashboard service and the private worker must use least-privilege
+credentials where practical. The worker does not require a public domain.
 
-Portfolio positions, cost bases, leverage, alerts, decision journals, and user-specific thesis settings should be treated as confidential user data. Production deployments must not expose raw database credentials or unrestricted administrative endpoints to the public internet.
+## Security boundaries
 
-## Dependency security
+ThesisGuard is a monitoring and decision-support product. A bad market call, a
+false-positive alert, stale market data, or a missed trading opportunity is not
+by itself a software-security vulnerability. However, failures that allow data
+tampering, unauthorized rule changes, credential disclosure, cross-user data
+access, alert forgery, or source-validation bypass are security issues.
 
-CI should run dependency-license checks and, as the project matures, dependency-vulnerability scanning. High-risk new dependencies should not be merged without review of both their security posture and license terms.
+Any future capability that can place, modify, or cancel trades must be isolated
+behind explicit permissions, independent authentication, audit logging, and
+kill-switch controls.
 
 ## Disclosure
 
-We aim to validate reports promptly, remediate confirmed vulnerabilities, and coordinate disclosure after a fix is available. No promise of a specific response time is made at this stage.
+Please allow the project owner to investigate and remediate a reported issue
+before public disclosure. No bug bounty or payment is promised unless a
+separate written program explicitly says otherwise.
