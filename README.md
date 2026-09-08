@@ -130,6 +130,18 @@ The same GitHub repository is connected to both API and worker, but each service
 - Historical replay/backtesting of monitoring rules.
 - Multi-user SaaS, auth, billing and exchange connectors.
 
+## Intellectual property and security
+
+**ThesisGuard is proprietary software. Copyright © 2026 HSanny. All Rights Reserved.**
+
+No general open-source license is granted for ThesisGuard's proprietary code. See:
+
+- [COPYRIGHT.md](COPYRIGHT.md) — proprietary copyright and usage notice
+- [SECURITY.md](SECURITY.md) — private vulnerability-reporting and secret-handling policy
+- [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — direct dependency register and license policy
+
+CI performs an automated license audit of the complete installed Python dependency tree and blocks deny-listed license families pending explicit review.
+
 ## Important boundary
 
 ThesisGuard is a monitoring and decision-support system. It does **not** automatically place trades and does not infer exact liquidation prices from leverage alone.
