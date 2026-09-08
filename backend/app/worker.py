@@ -27,6 +27,7 @@ from .services.intelligence import (
 )
 from .services.telegram import (
     format_alert_message,
+    localized,
     send_message as send_telegram_message,
     send_startup_message,
     telegram_configured,
@@ -250,12 +251,20 @@ async def rest_validation_loop(state: WorkerState) -> None:
                         "Binance Futures REST blocked with 451; backing off for %ss",
                         sleep_seconds,
                     )
-                    await _push_system_message(
-                        "⚠️ ThesisGuard Data Source DEGRADED\n"
-                        "Binance Futures REST validation is blocked (HTTP 451) from the current cloud egress.\n"
-                        "Primary WebSocket monitoring can remain live, but REST price validation and OI are unavailable.\n"
-                        "Source confidence will remain reduced until an independent secondary feed is connected."
-                    )
+                    await _push_system_message(localized(
+                        (
+                            "⚠️ ThesisGuard Data Source DEGRADED\n"
+                            "Binance Futures REST validation is blocked (HTTP 451) from the current cloud egress.\n"
+                            "Primary WebSocket monitoring can remain live, but REST price validation and OI are unavailable.\n"
+                            "Source confidence will remain reduced until an independent secondary feed is connected."
+                        ),
+                        (
+                            "⚠️ ThesisGuard 数据源降级\n"
+                            "当前云端出口访问 Binance Futures REST 被 HTTP 451 阻断。\n"
+                            "主 WebSocket 行情仍可继续监控，但 REST 价格校验与 OI 暂不可用。\n"
+                            "在接入独立第二数据源前，数据源置信度将保持较低。"
+                        ),
+                    ))
             else:
                 log.warning("REST validation HTTP failure: status=%s", status)
 
@@ -388,16 +397,27 @@ async def persistence_loop(state: WorkerState) -> None:
                         db.commit()
 
                         icon = "🎯" if entry_state == "reassess" else "🔵"
-                        await send_telegram_message(
-                            f"{icon} ThesisGuard Planned Entry\n"
-                            f"Asset: {symbol}\n"
-                            f"State: {entry_state.upper()}\n"
-                            f"Mark price: {details['price']:.8f}\n"
-                            f"Configured trigger: {details['trigger']}\n"
-                            f"Distance: {details['distance_pct']:.2f}%\n\n"
-                            "Reassess structure, leverage and thesis before placing an order. "
-                            "No auto-trading."
-                        )
+                        await send_telegram_message(localized(
+                            (
+                                f"{icon} ThesisGuard Planned Entry\n"
+                                f"Asset: {symbol}\n"
+                                f"State: {entry_state.upper()}\n"
+                                f"Mark price: {details['price']:.8f}\n"
+                                f"Configured trigger: {details['trigger']}\n"
+                                f"Distance: {details['distance_pct']:.2f}%\n\n"
+                                "Reassess structure, leverage and thesis before placing an order. "
+                                "No auto-trading."
+                            ),
+                            (
+                                f"{icon} ThesisGuard 计划入场提醒\n"
+                                f"资产：{symbol}\n"
+                                f"状态：{'进入重新评估区' if entry_state == 'reassess' else '接近计划价'}\n"
+                                f"标记价格：{details['price']:.8f}\n"
+                                f"配置触发位：{details['trigger']}\n"
+                                f"距离：{details['distance_pct']:.2f}%\n\n"
+                                "请在下单前重新评估市场结构、杠杆与投资逻辑。系统不会自动交易。"
+                            ),
+                        ))
 
         if persisted_this_cycle > 0:
             _heartbeat("worker-ws", {
@@ -429,6 +449,8 @@ async def _push_system_message(text: str) -> bool:
 
 async def market_health_loop(state: WorkerState) -> None:
     """Push feed-live/stale/recovered status without blocking market collection."""
+    if not settings.telegram_feed_health_enabled:
+        return
     live_announced = False
     stale_announced = False
     last_hourly = datetime.now(timezone.utc)
@@ -443,39 +465,68 @@ async def market_health_loop(state: WorkerState) -> None:
             if not live_announced:
                 live_announced = True
                 stale_announced = False
-                await _push_system_message(
-                    "✅ ThesisGuard Market Feed LIVE\n"
-                    f"Watching: {len(state.symbols)} symbols\n"
-                    f"Last persisted tick age: {age:.1f}s\n"
-                    "Market collection and PostgreSQL persistence are active."
-                )
+                await _push_system_message(localized(
+                    (
+                        "✅ ThesisGuard Market Feed LIVE\n"
+                        f"Watching: {len(state.symbols)} symbols\n"
+                        f"Last persisted tick age: {age:.1f}s\n"
+                        "Market collection and PostgreSQL persistence are active."
+                    ),
+                    (
+                        "✅ ThesisGuard 市场数据流正常\n"
+                        f"监控资产：{len(state.symbols)} 个\n"
+                        f"最新落库行情距今：{age:.1f} 秒\n"
+                        "行情采集与 PostgreSQL 持久化均正常。"
+                    ),
+                ))
 
             if age > settings.stale_after_seconds and not stale_announced:
                 stale_announced = True
-                await _push_system_message(
-                    "⚠️ ThesisGuard Market Feed STALE\n"
-                    f"No persisted market tick for {int(age)} seconds.\n"
-                    "Risk alerts may be incomplete until the feed recovers."
-                )
+                await _push_system_message(localized(
+                    (
+                        "⚠️ ThesisGuard Market Feed STALE\n"
+                        f"No persisted market tick for {int(age)} seconds.\n"
+                        "Risk alerts may be incomplete until the feed recovers."
+                    ),
+                    (
+                        "⚠️ ThesisGuard 市场数据流过期\n"
+                        f"已有 {int(age)} 秒没有新的行情成功落库。\n"
+                        "在数据恢复前，风险提醒可能不完整。"
+                    ),
+                ))
 
             if age <= settings.stale_after_seconds and stale_announced:
                 stale_announced = False
-                await _push_system_message(
-                    "✅ ThesisGuard Market Feed RECOVERED\n"
-                    f"Persistence resumed. Latest tick age: {age:.1f}s."
-                )
+                await _push_system_message(localized(
+                    (
+                        "✅ ThesisGuard Market Feed RECOVERED\n"
+                        f"Persistence resumed. Latest tick age: {age:.1f}s."
+                    ),
+                    (
+                        "✅ ThesisGuard 市场数据流已恢复\n"
+                        f"行情落库已经恢复；最新行情距今 {age:.1f} 秒。"
+                    ),
+                ))
 
             if (
                 settings.telegram_health_heartbeat_seconds > 0
                 and (now - last_hourly).total_seconds() >= settings.telegram_health_heartbeat_seconds
             ):
                 last_hourly = now
-                await _push_system_message(
-                    "💓 ThesisGuard Health\n"
-                    f"Market feed: {'LIVE' if age <= settings.stale_after_seconds else 'STALE'}\n"
-                    f"Watching: {len(state.symbols)} symbols\n"
-                    f"Last persisted tick age: {age:.1f}s"
-                )
+                await _push_system_message(localized(
+                    (
+                        "💓 ThesisGuard Health\n"
+                        f"Market feed: {'LIVE' if age <= settings.stale_after_seconds else 'STALE'}\n"
+                        f"Watching: {len(state.symbols)} symbols\n"
+                        f"Last persisted tick age: {age:.1f}s"
+                    ),
+                    (
+                        "💓 ThesisGuard 运行状态\n"
+                        f"市场数据流：{'正常' if age <= settings.stale_after_seconds else '过期'}\n"
+                        f"监控资产：{len(state.symbols)} 个\n"
+                        f"最新落库行情距今：{age:.1f} 秒"
+                    ),
+                ))
 
         await asyncio.sleep(10)
 
