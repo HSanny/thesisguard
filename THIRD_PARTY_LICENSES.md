@@ -1,8 +1,11 @@
 # Third-Party License Register
 
-ThesisGuard itself is proprietary. The project depends on third-party open-source packages that remain subject to their own licenses.
+ThesisGuard itself is proprietary. Third-party dependencies remain governed by
+their own licenses; this repository does **not** relicense third-party code.
 
-This file records the **direct runtime dependencies currently pinned in `backend/requirements.txt`**. Transitive dependencies are scanned automatically in CI and must be reviewed when the dependency graph changes.
+This file records the direct Python dependencies currently pinned in
+`backend/requirements.txt`. Transitive dependencies are scanned automatically
+in CI and must be reviewed when the dependency graph changes.
 
 | Package | Current pinned version | License family | Commercial-use note |
 | --- | ---: | --- | --- |
@@ -14,24 +17,33 @@ This file records the **direct runtime dependencies currently pinned in `backend
 | pydantic-settings | 2.10.1 | MIT | Permissive |
 | PyYAML | 6.0.2 | MIT | Permissive |
 | SQLAlchemy | 2.0.43 | MIT | Permissive |
-| psycopg / psycopg-binary | 3.2.9 | LGPL-3.0 | Copyleft library license; keep it separable/unmodified as a normal dependency and preserve applicable notices/terms |
+| pg8000 | 1.31.5 | BSD-3-Clause | Permissive PostgreSQL driver |
 | pytest | 8.4.1 | MIT | Development/test dependency |
 
 ## Policy
 
-The current dependency policy is:
+The current dependency policy is intentionally conservative:
 
 - MIT, BSD, Apache-2.0, ISC, PSF and similarly permissive licenses are normally acceptable.
-- LGPL dependencies require explicit review and preservation of applicable obligations.
-- AGPL, strong GPL, SSPL, Business Source License, Elastic License, Commons Clause, and similarly restrictive/source-available terms are blocked by default until explicitly reviewed.
+- LGPL and MPL dependencies require explicit human review and preservation of applicable obligations.
+- AGPL, strong GPL, SSPL, Business Source License, Elastic License, Commons Clause,
+  non-commercial-only terms, and similarly restrictive/source-available terms are
+  blocked by default until explicitly reviewed.
 - Unknown or ambiguous license metadata must be surfaced for human review.
+- The upstream license text is authoritative when package metadata and license
+  files disagree.
+
+A notable early audit finding was that Psycopg 3 is LGPL-3.0-only. It is
+commercially usable under its terms, but ThesisGuard moved to the BSD-3-Clause
+`pg8000` driver in the Railway deployment candidate to reduce compliance
+complexity for a proprietary SaaS product.
 
 ## Automated audit
 
-CI installs `pip-licenses` and runs `scripts/license_guard.py` against the complete installed dependency tree.
+CI installs `pip-licenses`, scans the complete installed Python dependency tree,
+runs `scripts/license_guard.py`, and uploads a dependency license report as a
+workflow artifact.
 
-The guard fails the build when it detects a license family on the project's deny list. Unknown/ambiguous metadata is printed prominently so it can be reviewed before commercial distribution.
-
-## Important
-
-This register is an engineering compliance aid, not a substitute for legal review. Before selling ThesisGuard, distributing packaged software, or signing an enterprise agreement, perform a formal dependency and IP review and preserve any required third-party notices.
+The automated policy is an engineering guardrail, not a substitute for legal
+review before commercial launch, packaged distribution, enterprise licensing,
+or a material change in the dependency graph.
