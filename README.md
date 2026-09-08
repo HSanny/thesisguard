@@ -136,11 +136,12 @@ The same GitHub repository is connected to both API and worker, but each service
 
 No general open-source license is granted for ThesisGuard's proprietary code. See:
 
+- [LICENSE](LICENSE) — proprietary license / All Rights Reserved
 - [COPYRIGHT.md](COPYRIGHT.md) — proprietary copyright and usage notice
 - [SECURITY.md](SECURITY.md) — private vulnerability-reporting and secret-handling policy
 - [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — direct dependency register and license policy
 
-CI performs an automated license audit of the complete installed Python dependency tree and blocks deny-listed license families pending explicit review.
+CI performs an automated license audit of the complete installed Python dependency tree and blocks deny-listed license families pending explicit review. The Railway deployment candidate uses the BSD-3-Clause `pg8000` PostgreSQL driver to keep the proprietary SaaS dependency profile simpler.
 
 ## Important boundary
 
