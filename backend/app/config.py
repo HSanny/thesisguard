@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     price_conflict_bps: float = 35.0
     stale_after_seconds: int = 90
 
+    telegram_alerts_enabled: bool = False
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_send_startup: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
