@@ -61,6 +61,19 @@ class ServiceHeartbeat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class MarketSourceSnapshot(Base):
+    __tablename__ = "market_source_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(24), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    mark_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    index_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    open_interest_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class IntelligenceEvent(Base):
     __tablename__ = "intelligence_events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
