@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     price_conflict_bps: float = 35.0
     stale_after_seconds: int = 90
 
+    multi_source_enabled: bool = True
+    exchange_validation_seconds: int = 30
+    okx_rest_base: str = "https://www.okx.com"
+    bybit_rest_base: str = "https://api.bybit.com"
+
     telegram_alerts_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
