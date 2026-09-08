@@ -178,6 +178,38 @@ def classify_event(title: str, summary: str = "", *, scheduled: bool = False) ->
     return min(10.0, importance), sorted(assets), sorted(themes)
 
 
+
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with",
+    "after", "as", "at", "by", "from", "is", "are", "be", "will", "says", "said",
+    "new", "latest", "amid", "over", "into", "its", "their", "this", "that",
+}
+
+
+def _headline_tokens(title: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9$]+", title.lower())
+    return {t for t in tokens if len(t) > 2 and t not in _STOPWORDS}
+
+
+def annotate_corroboration(events: list[NormalizedEvent], threshold: float = 0.52) -> list[NormalizedEvent]:
+    """Annotate similar headlines with independent-source corroboration metadata."""
+    token_sets = [_headline_tokens(e.title) for e in events]
+    for i, event in enumerate(events):
+        domains = {_domain(event.source_url) or event.source_name.lower()}
+        for j, other in enumerate(events):
+            if i == j:
+                continue
+            a, b = token_sets[i], token_sets[j]
+            if not a or not b:
+                continue
+            overlap = len(a & b) / max(1, len(a | b))
+            if overlap >= threshold:
+                domains.add(_domain(other.source_url) or other.source_name.lower())
+        event.metadata["corroboration_count"] = len(domains)
+        event.metadata["corroborating_sources"] = sorted(domains)[:12]
+    return events
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -609,7 +641,18 @@ def immediate_push_candidate(event: IntelligenceEvent) -> bool:
         return False
     if event.source_tier <= 2:
         return True
-    return event.source_tier == 3 and event.importance >= 8.5
+
+    try:
+        metadata = json.loads(event.metadata_json or "{}")
+    except Exception:
+        metadata = {}
+    corroboration = int(metadata.get("corroboration_count") or 1)
+
+    if event.source_tier == 3:
+        return event.importance >= 7.5 and corroboration >= 2
+    if event.source_tier == 4:
+        return event.importance >= 8.0 and corroboration >= 3
+    return False
 
 
 def upcoming_stage(event_time: datetime | None, now: datetime | None = None) -> str | None:
