@@ -4,10 +4,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func
-from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat
+from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent
 from .portfolio import load_portfolio, save_portfolio, ensure_portfolio_seeded
 
-app = FastAPI(title="ThesisGuard", version="0.2.3")
+app = FastAPI(title="ThesisGuard", version="0.3.0")
 
 
 class PortfolioPayload(BaseModel):
@@ -29,7 +29,7 @@ def health() -> dict:
     for h in heartbeats:
         ts = h.updated_at if h.updated_at.tzinfo else h.updated_at.replace(tzinfo=timezone.utc)
         services.append({"service": h.service, "updated_at": ts.isoformat(), "age_seconds": (now-ts).total_seconds(), "detail": json.loads(h.detail or "{}")})
-    return {"ok": True, "service": "thesisguard-api", "version": "0.2.3", "workers": services}
+    return {"ok": True, "service": "thesisguard-api", "version": "0.3.0", "workers": services}
 
 
 @app.get("/api/portfolio")
@@ -75,6 +75,66 @@ def alerts(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
     ]
 
 
+@app.get("/api/intelligence/events")
+def intelligence_events(
+    limit: int = Query(100, ge=1, le=500),
+    min_importance: float = Query(0.0, ge=0.0, le=10.0),
+) -> list[dict]:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(IntelligenceEvent)
+            .where(IntelligenceEvent.importance >= min_importance)
+            .order_by(IntelligenceEvent.first_seen_at.desc())
+            .limit(limit)
+        ).all()
+    return [_intel_event(r) for r in rows]
+
+
+@app.get("/api/intelligence/upcoming")
+def intelligence_upcoming(
+    hours: int = Query(168, ge=1, le=24 * 60),
+    min_importance: float = Query(6.0, ge=0.0, le=10.0),
+) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() + hours * 3600
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(IntelligenceEvent)
+            .where(IntelligenceEvent.status == "scheduled")
+            .where(IntelligenceEvent.importance >= min_importance)
+            .where(IntelligenceEvent.event_time.is_not(None))
+            .order_by(IntelligenceEvent.event_time.asc())
+        ).all()
+    out = []
+    for row in rows:
+        ts = row.event_time if row.event_time.tzinfo else row.event_time.replace(tzinfo=timezone.utc)
+        if now.timestamp() <= ts.timestamp() <= cutoff:
+            out.append(_intel_event(row))
+    return out
+
+
+def _intel_event(r: IntelligenceEvent) -> dict:
+    return {
+        "id": r.id,
+        "kind": r.event_kind,
+        "status": r.status,
+        "title": r.title,
+        "summary": r.summary,
+        "source": r.source_name,
+        "source_url": r.source_url,
+        "source_tier": r.source_tier,
+        "confidence": r.confidence,
+        "importance": r.importance,
+        "published_at": r.published_at.isoformat() if r.published_at else None,
+        "event_time": r.event_time.isoformat() if r.event_time else None,
+        "first_seen_at": r.first_seen_at.isoformat(),
+        "last_seen_at": r.last_seen_at.isoformat(),
+        "affected_assets": json.loads(r.affected_assets_json or "[]"),
+        "themes": json.loads(r.themes_json or "[]"),
+        "metadata": json.loads(r.metadata_json or "{}"),
+    }
+
+
 def _tick(r: MarketTick) -> dict:
     return {
         "symbol": r.symbol,
@@ -94,11 +154,11 @@ def _tick(r: MarketTick) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
     return r"""
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ThesisGuard v0.2.3</title>
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ThesisGuard v0.3.0</title>
 <style>
 :root{font-family:Inter,system-ui,sans-serif;background:#0b0d10;color:#e8eaed}body{margin:0}.wrap{max-width:1280px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:end;gap:16px}.muted{color:#8f98a3}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:20px 0}.card{background:#14181d;border:1px solid #262c33;border-radius:14px;padding:16px}.sym{font-weight:700;font-size:18px}.price{font-size:28px;font-weight:750;margin:8px 0}.ok{color:#66d19e}.warn{color:#f6c85f}.bad{color:#ff7b72}.pill{font-size:12px;padding:3px 8px;border-radius:999px;background:#222831}.row{display:flex;justify-content:space-between;gap:10px;margin-top:7px}textarea{width:100%;min-height:480px;background:#0d1117;color:#dce3ea;border:1px solid #30363d;border-radius:10px;padding:12px;box-sizing:border-box}button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #252b31;font-size:13px}@media(max-width:700px){.wrap{padding:14px}.top{display:block}}
 </style></head><body><div class='wrap'>
-<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.2.3 LIVE</span></h1><div class='muted'>Thesis-aware market monitoring · Binance WS primary + REST validation</div></div><div id='health' class='muted'>checking worker…</div></div>
+<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.3.0 INTEL</span></h1><div class='muted'>Thesis-aware market monitoring · Binance WS primary + REST validation</div></div><div id='health' class='muted'>checking worker…</div></div>
 <div id='market' class='grid'></div>
 <div class='card'><h2>Portfolio / thesis rules</h2><p class='muted'>Stored in Postgres. Saving here updates both API and worker without redeploy.</p><textarea id='portfolio'></textarea><div style='margin-top:10px'><button onclick='savePortfolio()'>Save live rules</button> <span id='saved' class='muted'></span></div></div>
 <div class='card' style='margin-top:12px'><h2>Recent alerts</h2><div id='alerts'></div></div>
