@@ -43,10 +43,18 @@ class BinanceFuturesClient:
             return float(r.json()["openInterest"])
 
 
+def _normalize_mark_price_ws_base(ws_base: str) -> str:
+    """Map retired USD-M mark-price stream bases to the current /market endpoint."""
+    legacy = "wss://fstream.binance.com/stream?streams="
+    if ws_base == legacy:
+        return "wss://fstream.binance.com/market/stream?streams="
+    return ws_base
+
+
 class BinanceMarkPriceStream:
     def __init__(self, symbols: list[str], ws_base: str | None = None) -> None:
         self.symbols = sorted(set(s.upper() for s in symbols))
-        self.ws_base = ws_base or settings.binance_ws_base
+        self.ws_base = _normalize_mark_price_ws_base(ws_base or settings.binance_ws_base)
 
     @property
     def url(self) -> str:
