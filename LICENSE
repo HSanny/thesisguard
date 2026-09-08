@@ -1,0 +1,28 @@
+ThesisGuard Proprietary License
+
+Copyright (c) 2026 HSanny. All rights reserved.
+
+ThesisGuard, including its source code, documentation, risk logic, thesis logic,
+monitoring rules, data models, interfaces, and associated materials (the
+"Software"), is proprietary software.
+
+No license or permission is granted to any person or entity to copy, modify,
+redistribute, sublicense, sell, publish, reverse engineer, create derivative
+works from, or commercially use the Software except under a separate written
+agreement with the copyright holder.
+
+Access to a private repository, deployment environment, development copy, or
+evaluation instance does not transfer ownership and does not grant an implied
+license beyond the access expressly authorized by the copyright holder.
+
+Third-party software and data used by or distributed with ThesisGuard remain
+subject to their respective licenses, notices, terms, and attribution
+requirements. Nothing in this notice changes those third-party rights.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, ACCURACY, AVAILABILITY, OR FITNESS
+FOR TRADING OR INVESTMENT DECISIONS.
+
+For commercial licensing or other permissions, contact the repository owner
+through an authorized private channel.
