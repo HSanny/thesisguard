@@ -204,12 +204,16 @@ async def websocket_loop(state: WorkerState) -> None:
 async def rest_validation_loop(state: WorkerState) -> None:
     client = BinanceFuturesClient()
     oi_cycle = 0
+    blocked_451_announced = False
+
     while True:
+        sleep_seconds = settings.rest_validation_seconds
         try:
             prices = await client.all_prices()
             for symbol in list(state.symbols):
                 if symbol in prices:
                     state.states.setdefault(symbol, SymbolState()).rest_price = prices[symbol]
+
             oi_cycle += settings.rest_validation_seconds
             if oi_cycle >= settings.oi_refresh_seconds:
                 oi_cycle = 0
@@ -221,13 +225,43 @@ async def rest_validation_loop(state: WorkerState) -> None:
                 for symbol, result in zip(symbols, results):
                     if not isinstance(result, Exception):
                         state.states.setdefault(symbol, SymbolState()).open_interest = float(result)
+
             _heartbeat("worker-rest", {
+                "status": "live",
                 "symbols": len(state.symbols),
                 "last_validation": datetime.now(timezone.utc).isoformat(),
             })
+            blocked_451_announced = False
+
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 451:
+                sleep_seconds = max(900, settings.rest_validation_seconds)
+                _heartbeat("worker-rest", {
+                    "status": "blocked_451",
+                    "last_failure": datetime.now(timezone.utc).isoformat(),
+                    "detail": "Binance Futures REST unavailable from current deployment egress",
+                    "retry_seconds": sleep_seconds,
+                })
+                if not blocked_451_announced:
+                    blocked_451_announced = True
+                    log.warning(
+                        "Binance Futures REST blocked with 451; backing off for %ss",
+                        sleep_seconds,
+                    )
+                    await _push_system_message(
+                        "⚠️ ThesisGuard Data Source DEGRADED\n"
+                        "Binance Futures REST validation is blocked (HTTP 451) from the current cloud egress.\n"
+                        "Primary WebSocket monitoring can remain live, but REST price validation and OI are unavailable.\n"
+                        "Source confidence will remain reduced until an independent secondary feed is connected."
+                    )
+            else:
+                log.warning("REST validation HTTP failure: status=%s", status)
+
         except Exception as exc:
-            log.warning("REST validation failed: %r", exc)
-        await asyncio.sleep(settings.rest_validation_seconds)
+            log.warning("REST validation failed: %s", type(exc).__name__)
+
+        await asyncio.sleep(sleep_seconds)
 
 
 async def persistence_loop(state: WorkerState) -> None:
