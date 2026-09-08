@@ -117,3 +117,49 @@ Security rules:
 
 If the worker log says `Telegram alerts enabled` and
 `Telegram startup notification delivered`, delivery is active.
+
+
+## Market intelligence / event monitoring
+
+The worker also runs non-blocking intelligence collectors. A failure in Telegram,
+GDELT, BLS, Fed or an optional crypto-calendar provider must not stop the market
+WebSocket/persistence loop.
+
+Recommended worker variables:
+
+```text
+TELEGRAM_FEED_HEALTH_ENABLED=true
+TELEGRAM_HEALTH_HEARTBEAT_SECONDS=3600
+
+INTELLIGENCE_ENABLED=true
+INTELLIGENCE_POLL_SECONDS=300
+INTELLIGENCE_CALENDAR_POLL_SECONDS=3600
+INTELLIGENCE_PUSH_MIN_IMPORTANCE=7.0
+
+GDELT_ENABLED=true
+GDELT_TIMESPAN=30min
+GDELT_MAX_RECORDS=50
+
+# Optional: enables curated crypto upcoming-event/calendar ingestion.
+COINMARKETCAL_API_KEY=
+```
+
+Built-in sources:
+
+- U.S. BLS official online calendar (scheduled macro releases, including CPI/PPI/jobs)
+- Federal Reserve official monetary-policy RSS
+- GDELT DOC API as a broad global-news discovery layer
+- CoinMarketCal v2 events when an API key is configured
+
+Telegram health notifications:
+
+- first successfully persisted live market tick → `Market Feed LIVE`
+- feed stale longer than `STALE_AFTER_SECONDS` → `Market Feed STALE`
+- persistence resumes → `Market Feed RECOVERED`
+- optional periodic health heartbeat
+- 24h / 2h / 15m reminders for high-impact scheduled events
+- high-impact trusted-source intelligence alerts
+- planned-entry `APPROACHING` / `REASSESS` alerts
+
+After Telegram delivery has been verified, set `TELEGRAM_SEND_STARTUP=false` to
+avoid restart noise during deployments.
