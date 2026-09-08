@@ -6,5 +6,5 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 PyYAML==6.0.2
 SQLAlchemy==2.0.43
-psycopg[binary]==3.2.9
+pg8000==1.31.5
 pytest==8.4.1
