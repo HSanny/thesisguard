@@ -25,13 +25,18 @@ jobs:
       - name: Install application dependencies
         run: pip install -r backend/requirements.txt
       - name: Install license audit tooling
-        run: pip install pip-licenses
+        run: pip install pip-licenses==5.5.5
       - name: Enforce dependency license policy
         run: python scripts/license_guard.py
       - name: Generate full dependency license report
-        run: pip-licenses --format=markdown --with-urls --with-authors > dependency-license-report.md
+        run: |
+          mkdir -p build
+          pip-licenses --format=json --with-urls --output-file=build/dependency-licenses.json
+          pip-licenses --format=markdown --with-urls --output-file=build/dependency-licenses.md
       - name: Upload license audit report
         uses: actions/upload-artifact@v4
         with:
           name: dependency-license-report
-          path: dependency-license-report.md
+          path: |
+            build/dependency-licenses.json
+            build/dependency-licenses.md
