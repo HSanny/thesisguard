@@ -91,3 +91,29 @@ access to the repository.
 6. Confirm Railway is connected to the GitHub account that owns `HSanny/thesisguard`.
 
 Once the repo appears, select branch `railway-v0.2.1` for both the API and worker services.
+
+
+## Telegram push alerts
+
+ThesisGuard can send material risk alerts directly from the worker through the
+official Telegram Bot API.
+
+Configure these variables on the **worker service only**:
+
+```text
+TELEGRAM_ALERTS_ENABLED=true
+TELEGRAM_BOT_TOKEN=<BotFather token>
+TELEGRAM_CHAT_ID=<target private chat/group/channel id or @channelusername>
+TELEGRAM_SEND_STARTUP=true
+```
+
+Security rules:
+
+- Store `TELEGRAM_BOT_TOKEN` only in Railway Variables/Secrets.
+- Never commit the token to GitHub, `.env.example`, screenshots, logs, or issues.
+- The API service does not need the Telegram token.
+- The worker sends a startup confirmation when enabled, then sends only newly
+  persisted material alerts subject to the existing alert deduplication window.
+
+If the worker log says `Telegram alerts enabled` and
+`Telegram startup notification delivered`, delivery is active.
