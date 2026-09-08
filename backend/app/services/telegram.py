@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -9,12 +10,36 @@ from ..config import settings
 log = logging.getLogger("thesisguard.telegram")
 
 
+def language_mode() -> str:
+    value = (settings.telegram_language or "bilingual").strip().lower()
+    return value if value in {"bilingual", "zh", "en"} else "bilingual"
+
+
+def localized(en: str, zh: str) -> str:
+    mode = language_mode()
+    if mode == "zh":
+        return zh
+    if mode == "en":
+        return en
+    return f"{zh}\n\n────────── EN ──────────\n{en}"
+
+
 def telegram_configured() -> bool:
     return bool(
         settings.telegram_alerts_enabled
         and settings.telegram_bot_token.strip()
         and settings.telegram_chat_id.strip()
     )
+
+
+def _translate_reason(reason: str) -> str:
+    match = re.fullmatch(r"price (-?\d+(?:\.\d+)?)% below entry", reason)
+    if match:
+        return f"价格较开仓价低 {match.group(1)}%"
+    match = re.fullmatch(r"below configured level (.+)", reason)
+    if match:
+        return f"价格跌破配置关键位 {match.group(1)}"
+    return reason
 
 
 def format_alert_message(
@@ -30,24 +55,40 @@ def format_alert_message(
 ) -> str:
     sev = severity.upper()
     emoji = "🔴" if severity == "red" else "🟡" if severity == "yellow" else "🟢"
-    reason_text = "\n".join(f"• {r}" for r in reasons) if reasons else "• No material reason recorded"
+    reason_en = "\n".join(f"• {r}" for r in reasons) if reasons else "• No material reason recorded"
+    reason_zh = "\n".join(f"• {_translate_reason(r)}" for r in reasons) if reasons else "• 暂无重大触发原因"
     price_text = "—" if mark_price is None else f"{mark_price:,.8f}".rstrip("0").rstrip(".")
     spread_text = "—" if spread_bps is None else f"{spread_bps:.2f} bps"
-    conflict_text = "YES" if source_conflict else "NO"
+    conflict_en = "YES" if source_conflict else "NO"
+    conflict_zh = "是" if source_conflict else "否"
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    return (
+    zh = (
+        f"{emoji} ThesisGuard {sev} 风险警报\n"
+        f"资产：{symbol}\n"
+        f"置信度：{confidence.upper()}\n"
+        f"标记价格：{price_text}\n"
+        f"数据源冲突：{conflict_zh}\n"
+        f"价差：{spread_text}\n\n"
+        f"触发原因：\n{reason_zh}\n\n"
+        "解读：检测到价格风险信号；在缺少结构性确认前，"
+        "ThesisGuard 不会把单次跌破直接判定为投资逻辑失效。\n\n"
+        f"时间：{now}\n"
+        "仅用于监控与决策支持 · 不自动交易"
+    )
+    en = (
         f"{emoji} ThesisGuard {sev} ALERT\n"
         f"Asset: {symbol}\n"
         f"Confidence: {confidence.upper()}\n"
         f"Mark price: {price_text}\n"
-        f"Source conflict: {conflict_text}\n"
+        f"Source conflict: {conflict_en}\n"
         f"Spread: {spread_text}\n\n"
-        f"Triggers:\n{reason_text}\n\n"
+        f"Triggers:\n{reason_en}\n\n"
         f"Interpretation: {explanation}\n\n"
         f"Time: {now}\n"
-        f"Monitoring only · no auto-trading"
+        "Monitoring only · no auto-trading"
     )
+    return localized(en, zh)
 
 
 def _safe_json(response: httpx.Response) -> dict:
@@ -127,10 +168,19 @@ async def send_message(text: str, max_attempts: int = 3) -> bool:
 
 
 async def send_startup_message(symbol_count: int) -> bool:
-    text = (
-        "✅ ThesisGuard worker online\n"
-        "Telegram alerts: ACTIVE\n"
-        f"Watching: {symbol_count} symbols\n"
-        "Risk alerts will be pushed automatically when a material alert is created."
+    return await send_message(
+        localized(
+            (
+                "✅ ThesisGuard worker online\n"
+                "Telegram alerts: ACTIVE\n"
+                f"Watching: {symbol_count} symbols\n"
+                "Risk and intelligence alerts will be pushed automatically."
+            ),
+            (
+                "✅ ThesisGuard Worker 已上线\n"
+                "Telegram 推送：已启用\n"
+                f"监控资产：{symbol_count} 个\n"
+                "风险与市场情报将在触发条件满足时自动推送。"
+            ),
+        )
     )
-    return await send_message(text)
