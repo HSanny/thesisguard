@@ -1,7 +1,9 @@
 name: CI
+
 on:
   push:
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,3 +14,24 @@ jobs:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
       - run: pytest backend/tests -q
+
+  license-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install application dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Install license audit tooling
+        run: pip install pip-licenses
+      - name: Enforce dependency license policy
+        run: python scripts/license_guard.py
+      - name: Generate full dependency license report
+        run: pip-licenses --format=markdown --with-urls --with-authors > dependency-license-report.md
+      - name: Upload license audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-license-report
+          path: dependency-license-report.md
