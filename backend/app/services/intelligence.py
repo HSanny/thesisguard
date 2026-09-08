@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db import AlertRecord, IntelligenceEvent, SessionLocal
+from .telegram import localized
 
 log = logging.getLogger("thesisguard.intelligence")
 
@@ -677,10 +678,35 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
     themes = json.loads(event.themes_json or "[]")
     when = event.event_time or event.published_at or event.first_seen_at
     when_text = when.astimezone(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d %H:%M SGT") if when else "—"
-    prefix = "🗓 UPCOMING" if stage else ("🔴 HIGH IMPACT" if event.importance >= 9 else "🟡 MARKET INTELLIGENCE")
-    stage_text = f" · {stage} reminder" if stage else ""
-    return (
-        f"{prefix}{stage_text}\n"
+    prefix_en = "🗓 UPCOMING" if stage else ("🔴 HIGH IMPACT" if event.importance >= 9 else "🟡 MARKET INTELLIGENCE")
+    prefix_zh = "🗓 即将发生" if stage else ("🔴 高影响事件" if event.importance >= 9 else "🟡 市场情报")
+    stage_en = f" · {stage} reminder" if stage else ""
+    stage_zh = f" · 提前 {stage} 提醒" if stage else ""
+    summary = event.summary[:900] if event.summary else "New event detected. Thesis impact requires confirmation against market response."
+
+    theme_zh_map = {
+        "macro": "宏观", "rates": "利率", "geopolitics": "地缘政治", "energy": "能源",
+        "inflation": "通胀", "crypto": "加密市场", "regulation": "监管", "security": "安全事件",
+        "catalyst": "催化剂", "scheduled": "预定事件", "fomc": "FOMC",
+        "monetary_policy": "货币政策", "news_discovery": "新闻发现",
+        "political_memecoin": "政治 Meme 币", "crypto_calendar": "加密日历",
+    }
+    themes_zh = [theme_zh_map.get(t, t) for t in themes]
+
+    zh = (
+        f"{prefix_zh}{stage_zh}\n"
+        f"原文标题：{event.title}\n\n"
+        f"重要度：{event.importance:.1f}/10\n"
+        f"置信度：{event.confidence.upper()} · 来源等级：Tier {event.source_tier}\n"
+        f"时间：{when_text}\n"
+        f"主题：{', '.join(themes_zh) if themes_zh else '—'}\n"
+        f"潜在影响：{', '.join(assets) if assets else '广泛市场 / 尚未分类'}\n"
+        f"来源：{event.source_name}\n"
+        f"原文链接：{event.source_url}\n\n"
+        f"原文摘要：{summary}"
+    )
+    en = (
+        f"{prefix_en}{stage_en}\n"
         f"{event.title}\n\n"
         f"Importance: {event.importance:.1f}/10\n"
         f"Confidence: {event.confidence.upper()} · Source tier: {event.source_tier}\n"
@@ -689,5 +715,6 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
         f"Affected: {', '.join(assets) if assets else 'broad market / unclassified'}\n"
         f"Source: {event.source_name}\n"
         f"Source link: {event.source_url}\n\n"
-        f"{event.summary[:900] if event.summary else 'New event detected. Thesis impact requires confirmation against market response.'}"
+        f"{summary}"
     )
+    return localized(en, zh)
