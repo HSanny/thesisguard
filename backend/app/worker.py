@@ -529,6 +529,10 @@ async def intelligence_news_loop() -> None:
                     log.warning("CoinMarketCal fetch failed: %s", type(exc).__name__)
 
             if collected:
+                collected = [
+                    event for event in collected
+                    if event.importance >= settings.intelligence_store_min_importance
+                ]
                 collected = annotate_corroboration(collected)
                 created = upsert_events(collected)
                 if created:
