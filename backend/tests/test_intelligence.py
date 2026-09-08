@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from backend.app.services.intelligence import (
+    annotate_corroboration,
     classify_event,
     parse_bls_ics,
     parse_gdelt,
@@ -102,3 +103,35 @@ def test_fomc_calendar_parser_extracts_future_meetings():
     assert events[0].importance == 10.0
     assert events[0].event_time == datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)
     assert events[0].metadata["summary_of_economic_projections"] is True
+
+
+def test_cross_source_corroboration_counts_independent_domains():
+    from backend.app.services.intelligence import NormalizedEvent
+
+    base = dict(
+        event_kind="news",
+        status="reported",
+        summary="",
+        source_tier=3,
+        confidence="medium",
+        importance=8.0,
+    )
+    events = [
+        NormalizedEvent(
+            canonical_key="a",
+            title="Iran escalation pushes crude oil sharply higher",
+            source_name="Source A",
+            source_url="https://a.example/story",
+            **base,
+        ),
+        NormalizedEvent(
+            canonical_key="b",
+            title="Crude oil sharply higher after Iran escalation",
+            source_name="Source B",
+            source_url="https://b.example/story",
+            **base,
+        ),
+    ]
+    annotate_corroboration(events)
+    assert events[0].metadata["corroboration_count"] == 2
+    assert events[1].metadata["corroboration_count"] == 2
