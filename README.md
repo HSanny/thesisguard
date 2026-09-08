@@ -18,6 +18,7 @@ ThesisGuard v0.2 moves the MVP from polling-only scaffolding to an always-on liv
 - **Dashboard updates every 3 seconds** with mark price, REST check, funding, OI and source confidence.
 - **Portfolio/rules can be edited live in the dashboard**; the worker reloads the latest DB-backed config without redeploy.
 - **Market ticks are downsampled before persistence** to avoid writing every 1-second WebSocket event to Postgres.
+- **Cross-exchange consensus** validates Binance WebSocket prices against independent OKX and Bybit public derivatives feeds. Per-source mark price, funding and OI USD are persisted separately, and confidence increases only when independent sources agree.
 - **Worker heartbeats are visible in `/api/health`** and on the dashboard.
 - **Alert deduplication and conservative price-only handling** reduce panic-inducing false escalation.
 - **Telegram push delivery** sends material risk alerts, feed health/recovery notices, planned-entry states and high-impact event intelligence from the always-on worker.
