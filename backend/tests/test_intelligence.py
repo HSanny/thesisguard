@@ -4,6 +4,7 @@ from backend.app.services.intelligence import (
     classify_event,
     parse_bls_ics,
     parse_gdelt,
+    parse_fomc_calendar_html,
     source_tier,
     upcoming_stage,
 )
@@ -83,3 +84,21 @@ def test_upcoming_stages():
     assert upcoming_stage(datetime(2026, 9, 9, 7, 0, tzinfo=timezone.utc), now) == "24h"
     assert upcoming_stage(datetime(2026, 9, 8, 9, 30, tzinfo=timezone.utc), now) == "2h"
     assert upcoming_stage(datetime(2026, 9, 8, 8, 10, tzinfo=timezone.utc), now) == "15m"
+
+
+def test_fomc_calendar_parser_extracts_future_meetings():
+    html = """
+    <html><body>
+      <h3>2026 FOMC Meetings</h3>
+      <div>September</div><div>15-16*</div>
+      <div>October</div><div>27-28</div>
+      <div>December</div><div>8-9*</div>
+      <h3>2027 FOMC Meetings</h3>
+      <div>January</div><div>26-27</div>
+    </body></html>
+    """
+    events = parse_fomc_calendar_html(html, year=2026)
+    assert len(events) == 3
+    assert events[0].importance == 10.0
+    assert events[0].event_time == datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)
+    assert events[0].metadata["summary_of_economic_projections"] is True
