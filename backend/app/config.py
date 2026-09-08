@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     intelligence_enabled: bool = True
     intelligence_poll_seconds: int = 300
     intelligence_calendar_poll_seconds: int = 3600
+    intelligence_store_min_importance: float = 5.0
     intelligence_push_min_importance: float = 7.0
     gdelt_enabled: bool = True
     gdelt_timespan: str = "30min"
