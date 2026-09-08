@@ -185,3 +185,29 @@ This applies to risk alerts, feed-health messages, planned-entry alerts, macro r
 and market-intelligence notifications. External news headlines and source excerpts remain
 in their original language for provenance; ThesisGuard adds localized structured labels
 and interpretation around them.
+
+
+## Cross-exchange market validation
+
+The worker can validate the Binance WebSocket against independent public
+derivatives data from OKX and Bybit. No trading API keys are required.
+
+Recommended worker variables:
+
+```text
+MULTI_SOURCE_ENABLED=true
+EXCHANGE_VALIDATION_SECONDS=30
+OKX_REST_BASE=https://www.okx.com
+BYBIT_REST_BASE=https://api.bybit.com
+```
+
+Confidence policy:
+
+- Binance WS only -> LOW
+- Binance WS + one independent exchange -> MEDIUM when aligned
+- Binance WS + OKX + Bybit -> HIGH when aligned
+- material cross-exchange divergence -> LOW / source conflict
+
+Per-source mark price, funding rate and open-interest USD snapshots are persisted
+in `market_source_snapshots` and exposed at `/api/market/sources/latest`.
+A single exchange failure does not stop the market worker.
