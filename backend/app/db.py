@@ -6,9 +6,9 @@ from .config import settings
 
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgres://"):
-        return "postgresql+psycopg://" + url[len("postgres://"):]
-    if url.startswith("postgresql://") and "+psycopg" not in url:
-        return "postgresql+psycopg://" + url[len("postgresql://"):]
+        return "postgresql+pg8000://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+pg8000" not in url:
+        return "postgresql+pg8000://" + url[len("postgresql://"):]
     return url
 
 
