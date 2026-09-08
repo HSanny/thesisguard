@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from sqlalchemy import select
 from .config import settings
-from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent
+from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent, MarketSourceSnapshot
 from .portfolio import load_portfolio, ensure_portfolio_seeded
 from .services.binance import BinanceFuturesClient, BinanceMarkPriceStream, MarkPriceEvent
-from .services.consensus import compare_ws_to_rest
+from .services.consensus import build_multi_source_consensus
 from .services.risk_engine import Evidence, EvidenceType, assess
+from .services.exchanges import BybitPublicMarketClient, OKXPublicMarketClient, ExchangeSnapshot
 from .services.intelligence import (
     already_alerted,
     annotate_corroboration,
@@ -48,6 +49,8 @@ class SymbolState:
     open_interest: float | None = None
     last_persisted_at: datetime | None = None
     recent_marks: list[float] = field(default_factory=list)
+    external: dict[str, ExchangeSnapshot] = field(default_factory=dict)
+    external_received_at: dict[str, datetime] = field(default_factory=dict)
 
 
 class WorkerState:
@@ -87,6 +90,18 @@ def _heartbeat(service: str, detail: dict) -> None:
         db.commit()
 
 
+def _fresh_external_prices(state: SymbolState, now: datetime | None = None) -> dict[str, float | None]:
+    now = now or datetime.now(timezone.utc)
+    max_age = max(90, settings.exchange_validation_seconds * 3)
+    out: dict[str, float | None] = {}
+    for source, snap in state.external.items():
+        received = state.external_received_at.get(source)
+        if received is None or (now - received).total_seconds() > max_age:
+            continue
+        out[source] = snap.mark_price
+    return out
+
+
 def evaluate_position(position: dict, state: SymbolState) -> tuple[str, dict] | None:
     if not state.event:
         return None
@@ -107,8 +122,12 @@ def evaluate_position(position: dict, state: SymbolState) -> tuple[str, dict] | 
         nearest = max(below)
         evidence.append(Evidence(EvidenceType.PRICE_CONFIRMED, f"below configured level {nearest}", 2.0, True, False))
 
-    check = compare_ws_to_rest(price, state.rest_price, settings.price_conflict_bps)
-    d = assess(evidence, price_conflict=check.conflict)
+    consensus = build_multi_source_consensus(
+        price,
+        _fresh_external_prices(state),
+        settings.price_conflict_bps,
+    )
+    d = assess(evidence, price_conflict=consensus.conflict)
     if d.severity == "green":
         return None
 
@@ -117,8 +136,11 @@ def evaluate_position(position: dict, state: SymbolState) -> tuple[str, dict] | 
         "score": d.score,
         "reasons": d.reasons,
         "counter": d.counter_evidence,
-        "source_conflict": check.conflict,
-        "spread_bps": check.spread_bps,
+        "source_conflict": consensus.conflict,
+        "spread_bps": consensus.max_spread_bps,
+        "source_confidence": consensus.confidence,
+        "source_count": consensus.source_count,
+        "source_prices": consensus.source_prices,
     }
 
 
@@ -255,14 +277,14 @@ async def rest_validation_loop(state: WorkerState) -> None:
                         (
                             "⚠️ ThesisGuard Data Source DEGRADED\n"
                             "Binance Futures REST validation is blocked (HTTP 451) from the current cloud egress.\n"
-                            "Primary WebSocket monitoring can remain live, but REST price validation and OI are unavailable.\n"
-                            "Source confidence will remain reduced until an independent secondary feed is connected."
+                            "Primary WebSocket monitoring can remain live. Binance REST price validation and Binance OI are unavailable.\n"
+                            "OKX/Bybit cross-exchange validation continues independently when those feeds are reachable."
                         ),
                         (
                             "⚠️ ThesisGuard 数据源降级\n"
                             "当前云端出口访问 Binance Futures REST 被 HTTP 451 阻断。\n"
-                            "主 WebSocket 行情仍可继续监控，但 REST 价格校验与 OI 暂不可用。\n"
-                            "在接入独立第二数据源前，数据源置信度将保持较低。"
+                            "主 WebSocket 行情仍可继续监控；Binance REST 价格校验与 Binance OI 暂不可用。\n"
+                            "只要 OKX/Bybit 可访问，跨交易所验证仍会独立继续运行。"
                         ),
                     ))
             else:
@@ -272,6 +294,100 @@ async def rest_validation_loop(state: WorkerState) -> None:
             log.warning("REST validation failed: %s", type(exc).__name__)
 
         await asyncio.sleep(sleep_seconds)
+
+
+async def multi_source_validation_loop(state: WorkerState) -> None:
+    if not settings.multi_source_enabled:
+        return
+
+    clients = {
+        "bybit": BybitPublicMarketClient(settings.bybit_rest_base),
+        "okx": OKXPublicMarketClient(settings.okx_rest_base),
+    }
+    previous_external_count = 0
+
+    while True:
+        symbols = list(state.symbols)
+        now = datetime.now(timezone.utc)
+        results = await asyncio.gather(
+            *(client.snapshots(symbols) for client in clients.values()),
+            return_exceptions=True,
+        )
+
+        source_status: dict[str, dict] = {}
+        snapshots_to_store: list[MarketSourceSnapshot] = []
+
+        for (source, _client), result in zip(clients.items(), results):
+            if isinstance(result, Exception):
+                source_status[source] = {
+                    "status": "error",
+                    "error_type": type(result).__name__,
+                    "symbols": 0,
+                }
+                log.warning("%s market validation failed: %s", source, type(result).__name__)
+                continue
+
+            source_status[source] = {
+                "status": "live",
+                "symbols": len(result),
+            }
+            for symbol, snap in result.items():
+                s = state.states.setdefault(symbol, SymbolState())
+                s.external[source] = snap
+                s.external_received_at[source] = now
+                snapshots_to_store.append(MarketSourceSnapshot(
+                    source=source,
+                    symbol=symbol,
+                    mark_price=snap.mark_price,
+                    index_price=snap.index_price,
+                    funding_rate=snap.funding_rate,
+                    open_interest_usd=snap.open_interest_usd,
+                    source_timestamp=snap.source_timestamp,
+                    received_at=now,
+                ))
+
+        if snapshots_to_store:
+            with SessionLocal() as db:
+                db.add_all(snapshots_to_store)
+                db.commit()
+
+        live_sources = sum(1 for v in source_status.values() if v.get("status") == "live")
+        _heartbeat("worker-sources", {
+            "status": "live" if live_sources else "degraded",
+            "live_sources": live_sources,
+            "sources": source_status,
+            "last_validation": now.isoformat(),
+        })
+
+        if previous_external_count > 0 and live_sources == 0:
+            await _push_system_message(localized(
+                (
+                    "⚠️ ThesisGuard External Market Validation LOST\n"
+                    "Both OKX and Bybit validation feeds are currently unavailable.\n"
+                    "Binance WebSocket may still be live, but cross-exchange confidence is reduced."
+                ),
+                (
+                    "⚠️ ThesisGuard 外部市场验证中断\n"
+                    "OKX 与 Bybit 当前均无法提供验证数据。\n"
+                    "Binance WebSocket 可能仍正常，但跨交易所置信度已经降低。"
+                ),
+            ))
+        elif previous_external_count == 0 and live_sources > 0:
+            await _push_system_message(localized(
+                (
+                    "✅ ThesisGuard Cross-Exchange Validation LIVE\n"
+                    f"Independent sources available: {live_sources}/2 (OKX / Bybit).\n"
+                    "Price consensus can now use multiple exchanges."
+                ),
+                (
+                    "✅ ThesisGuard 跨交易所验证已上线\n"
+                    f"独立数据源可用：{live_sources}/2（OKX / Bybit）。\n"
+                    "价格共识现在可以使用多个交易所进行交叉验证。"
+                ),
+            ))
+
+        previous_external_count = live_sources
+        await asyncio.sleep(settings.exchange_validation_seconds)
 
 
 async def persistence_loop(state: WorkerState) -> None:
@@ -290,18 +406,30 @@ async def persistence_loop(state: WorkerState) -> None:
             if s.last_persisted_at and (now - s.last_persisted_at).total_seconds() < settings.persist_interval_seconds:
                 continue
 
-            check = compare_ws_to_rest(s.event.mark_price, s.rest_price, settings.price_conflict_bps)
+            consensus = build_multi_source_consensus(
+                s.event.mark_price,
+                _fresh_external_prices(s, now),
+                settings.price_conflict_bps,
+            )
+            external_values = [
+                value for source, value in consensus.source_prices.items()
+                if source != "binance_ws"
+            ]
+            external_reference = (
+                sum(external_values) / len(external_values)
+                if external_values else None
+            )
             with SessionLocal() as db:
                 db.add(MarketTick(
                     symbol=symbol,
                     mark_price=s.event.mark_price,
                     index_price=s.event.index_price,
-                    rest_price=s.rest_price,
+                    rest_price=external_reference,
                     funding_rate=s.event.funding_rate,
                     open_interest=s.open_interest,
-                    spread_bps=check.spread_bps,
-                    source_conflict=check.conflict,
-                    source_confidence=check.confidence,
+                    spread_bps=consensus.max_spread_bps,
+                    source_conflict=consensus.conflict,
+                    source_confidence=consensus.confidence,
                     event_time=s.event.event_time,
                     received_at=now,
                 ))
@@ -698,6 +826,7 @@ async def main() -> None:
         websocket_loop(state),
         rest_validation_loop(state),
         persistence_loop(state),
+        multi_source_validation_loop(state),
         portfolio_refresh_loop(state),
         market_health_loop(state),
         intelligence_news_loop(),
