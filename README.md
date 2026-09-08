@@ -6,7 +6,7 @@ ThesisGuard is designed to answer a harder question than “did price move?”:
 
 > **Did the latest market move actually invalidate the investment thesis, or is it deleveraging, liquidity noise, duplicated news, or a temporary macro shock?**
 
-## v0.2 — live architecture
+## v0.3 — live market + event intelligence
 
 ThesisGuard v0.2 moves the MVP from polling-only scaffolding to an always-on live monitoring stack:
 
@@ -20,7 +20,12 @@ ThesisGuard v0.2 moves the MVP from polling-only scaffolding to an always-on liv
 - **Market ticks are downsampled before persistence** to avoid writing every 1-second WebSocket event to Postgres.
 - **Worker heartbeats are visible in `/api/health`** and on the dashboard.
 - **Alert deduplication and conservative price-only handling** reduce panic-inducing false escalation.
-- **Optional Telegram push delivery** sends newly created material alerts directly from the always-on worker; bot credentials stay in Railway environment variables.
+- **Telegram push delivery** sends material risk alerts, feed health/recovery notices, planned-entry states and high-impact event intelligence from the always-on worker.
+- **Event intelligence** normalizes scheduled macro catalysts and breaking-news discovery into a shared PostgreSQL event store with source tier, confidence, importance, themes and affected assets.
+- **BLS official calendar ingestion** tracks upcoming U.S. releases such as CPI, PPI and employment data and schedules 24h / 2h / 15m reminders.
+- **Federal Reserve monetary-policy RSS** supplies official policy releases.
+- **GDELT global discovery** scans macro, crypto, energy and geopolitical themes; unknown sources remain low confidence and cannot directly become trusted high-impact alerts.
+- **Optional CoinMarketCal integration** adds curated crypto catalysts, releases and conference/event coverage when an API key is configured.
 
 ## Core principles
 
@@ -108,12 +113,13 @@ The same GitHub repository is connected to both API and worker, but each service
 
 ## Product roadmap
 
-### v0.3
+### v0.3 next increments
 
-- Secondary exchange / CoinGecko sanity source independent of Binance.
+- Secondary exchange / market-data sanity source independent of Binance.
 - OI change, funding regime and taker buy/sell historical features.
 - Structural break confirmation: persistence, reclaim and failed-retest logic.
-- Planned-entry evaluator (`far / approaching / reassess / avoid mechanical entry`).
+- Semantic event clustering / cross-source corroboration before escalating noisy stories.
+- LLM-assisted event summaries and explicit thesis-impact mapping.
 - Portfolio crypto-beta / concentration metrics.
 
 ### v0.4
