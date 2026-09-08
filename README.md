@@ -20,6 +20,7 @@ ThesisGuard v0.2 moves the MVP from polling-only scaffolding to an always-on liv
 - **Market ticks are downsampled before persistence** to avoid writing every 1-second WebSocket event to Postgres.
 - **Worker heartbeats are visible in `/api/health`** and on the dashboard.
 - **Alert deduplication and conservative price-only handling** reduce panic-inducing false escalation.
+- **Optional Telegram push delivery** sends newly created material alerts directly from the always-on worker; bot credentials stay in Railway environment variables.
 
 ## Core principles
 
@@ -124,7 +125,6 @@ The same GitHub repository is connected to both API and worker, but each service
 
 ### v0.5+
 
-- Telegram / push alerts.
 - Decision journal and alert-outcome tracking.
 - False-positive / missed-alert evaluation.
 - Historical replay/backtesting of monitoring rules.
