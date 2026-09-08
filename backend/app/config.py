@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_send_startup: bool = True
+    telegram_language: str = "bilingual"
     telegram_feed_health_enabled: bool = True
     telegram_health_heartbeat_seconds: int = 3600
 
