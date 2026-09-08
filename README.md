@@ -1,10 +1,25 @@
 # ThesisGuard
 
-Thesis-aware real-time portfolio monitoring for leveraged crypto and macro-sensitive positions.
+**Thesis-aware real-time portfolio monitoring for leveraged crypto and macro-sensitive positions.**
 
 ThesisGuard is designed to answer a harder question than “did price move?”:
 
 > **Did the latest market move actually invalidate the investment thesis, or is it deleveraging, liquidity noise, duplicated news, or a temporary macro shock?**
+
+## v0.2 — live architecture
+
+ThesisGuard v0.2 moves the MVP from polling-only scaffolding to an always-on live monitoring stack:
+
+- **Binance USDⓈ-M WebSocket is the primary market feed** using `@markPrice@1s`.
+- **Binance REST validates the live feed** and supplies periodic open interest.
+- **WS↔REST price conflicts lower source confidence** instead of producing a directional alert.
+- **PostgreSQL is the shared source of truth** for market history, alerts, heartbeats and editable portfolio rules.
+- **API and worker run as separate always-on services** and can be deployed from the same GitHub repository.
+- **Dashboard updates every 3 seconds** with mark price, REST check, funding, OI and source confidence.
+- **Portfolio/rules can be edited live in the dashboard**; the worker reloads the latest DB-backed config without redeploy.
+- **Market ticks are downsampled before persistence** to avoid writing every 1-second WebSocket event to Postgres.
+- **Worker heartbeats are visible in `/api/health`** and on the dashboard.
+- **Alert deduplication and conservative price-only handling** reduce panic-inducing false escalation.
 
 ## Core principles
 
@@ -18,17 +33,26 @@ ThesisGuard is designed to answer a harder question than “did price move?”:
 - Explainability: every alert stores confidence, triggers, counter-evidence, and unresolved items.
 - Decision journal: future releases will link market state to entry/exit decisions for post-trade review.
 
-## MVP architecture
+## Current portfolio seed
 
-- FastAPI API
-- Binance USDⓈ-M Futures market data
-- Configurable portfolio / planned entries in YAML
-- Risk-evidence engine
-- Alert audit storage
-- Regression tests, including the SK Hynix false-risk-escalation case
-- Docker / Railway deployment scaffolding
+The repository currently seeds the active working portfolio from `config/portfolio.yaml`. On first startup it is copied into PostgreSQL and subsequent edits are versioned in the database.
 
-## Local run
+Current watchlist includes BTC, ETH and TAO alongside active positions/planned entries.
+
+## Local run with Docker
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+- Dashboard: http://localhost:8000
+- API docs: http://localhost:8000/docs
+- Health / worker heartbeat: http://localhost:8000/api/health
+- Latest market state: http://localhost:8000/api/market/latest
+
+## Local run without Docker
 
 ```bash
 python -m venv .venv
@@ -37,37 +61,75 @@ pip install -r backend/requirements.txt
 uvicorn backend.app.main:app --reload
 ```
 
-Open:
+In another terminal:
 
-- API: http://localhost:8000
-- Docs: http://localhost:8000/docs
-- Health: http://localhost:8000/health
+```bash
+python -m backend.app.worker
+```
 
-Run tests:
+SQLite is supported for local development. For API + worker running as separate processes/containers, PostgreSQL is recommended.
+
+## Tests
 
 ```bash
 pytest backend/tests -q
 ```
 
-## Docker
+The suite includes a regression case based on the SK Hynix false-risk-escalation incident: duplicated/stale bearish information plus a liquidity/deleveraging event must not become a high-confidence red alert when thesis damage and structural confirmation are absent.
 
-```bash
-docker compose up --build
+## Railway
+
+See [`RAILWAY_DEPLOY.md`](RAILWAY_DEPLOY.md).
+
+v0.2 uses three Railway services in one project:
+
+```text
+PostgreSQL
+   ▲       ▲
+   │       │
+ API     Worker
+(public)  │
+          ▼
+   Binance USD-M WS
+   + REST validation
 ```
 
-## Product direction
+The same GitHub repository is connected to both API and worker, but each service uses a different custom start command.
 
-1. Binance WebSocket as the primary live source; REST as validation.
-2. Secondary exchange / CoinGecko sanity checks.
-3. OI, funding, liquidation and taker-flow history.
-4. News/event ingestion with canonical-event deduplication and timestamp validation.
-5. Thesis graph per asset with invalidation conditions.
-6. Editable dashboard for positions, conviction, rules and planned entries.
-7. Telegram / push alerts with confidence and counter-evidence.
-8. Decision journal and false-alert / missed-alert evaluation.
-9. Backtesting alert rules against historical episodes.
-10. Multi-user SaaS architecture.
+## API
 
-## Disclaimer
+- `GET /api/health`
+- `GET /api/portfolio`
+- `PUT /api/portfolio`
+- `GET /api/market/latest`
+- `GET /api/market/history/{symbol}`
+- `GET /api/alerts`
 
-ThesisGuard is a monitoring and decision-support system, not an automated trading system and not financial advice. It does not place trades or claim exact liquidation prices.
+## Product roadmap
+
+### v0.3
+
+- Secondary exchange / CoinGecko sanity source independent of Binance.
+- OI change, funding regime and taker buy/sell historical features.
+- Structural break confirmation: persistence, reclaim and failed-retest logic.
+- Planned-entry evaluator (`far / approaching / reassess / avoid mechanical entry`).
+- Portfolio crypto-beta / concentration metrics.
+
+### v0.4
+
+- News/event ingestion with canonical-event deduplication and timestamp validation.
+- Source reliability hierarchy (official > tier-1 wire > specialist > aggregator/social).
+- Asset thesis graph and explicit thesis-invalidation conditions.
+- Macro engine: DXY, Treasury yields, real-rate proxies, oil, CPI/PPI/NFP/FOMC.
+
+### v0.5+
+
+- Telegram / push alerts.
+- Decision journal and alert-outcome tracking.
+- False-positive / missed-alert evaluation.
+- Historical replay/backtesting of monitoring rules.
+- Multi-user SaaS, auth, billing and exchange connectors.
+
+## Important boundary
+
+ThesisGuard is a monitoring and decision-support system. It does **not** automatically place trades and does not infer exact liquidation prices from leverage alone.
