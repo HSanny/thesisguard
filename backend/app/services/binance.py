@@ -1,47 +1,86 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import asyncio
 import httpx
+import websockets
 from ..config import settings
 
 
 @dataclass(slots=True)
-class BinanceSnapshot:
+class RestMarketData:
     symbol: str
-    price: float
+    price: float | None = None
+    open_interest: float | None = None
+    observed_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class MarkPriceEvent:
+    symbol: str
+    mark_price: float
+    index_price: float | None
     funding_rate: float | None
-    open_interest: float | None
-    observed_at: datetime
+    event_time: datetime
 
 
 class BinanceFuturesClient:
     def __init__(self, base_url: str | None = None) -> None:
         self.base_url = base_url or settings.binance_fapi_base
 
-    async def snapshot(self, symbol: str) -> BinanceSnapshot:
+    async def all_prices(self) -> dict[str, float]:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=8.0) as client:
-            price_r, premium_r, oi_r = await _gather(client, symbol)
-        price = float(price_r["price"])
-        funding = float(premium_r["lastFundingRate"]) if premium_r.get("lastFundingRate") not in (None, "") else None
-        oi = float(oi_r["openInterest"]) if oi_r.get("openInterest") not in (None, "") else None
-        return BinanceSnapshot(
-            symbol=symbol,
-            price=price,
-            funding_rate=funding,
-            open_interest=oi,
-            observed_at=datetime.now(timezone.utc),
-        )
+            r = await client.get("/fapi/v1/ticker/price")
+            r.raise_for_status()
+            return {row["symbol"]: float(row["price"]) for row in r.json()}
+
+    async def open_interest(self, symbol: str) -> float:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=8.0) as client:
+            r = await client.get("/fapi/v1/openInterest", params={"symbol": symbol})
+            r.raise_for_status()
+            return float(r.json()["openInterest"])
 
 
-async def _gather(client: httpx.AsyncClient, symbol: str):
-    import asyncio
+class BinanceMarkPriceStream:
+    def __init__(self, symbols: list[str], ws_base: str | None = None) -> None:
+        self.symbols = sorted(set(s.upper() for s in symbols))
+        self.ws_base = ws_base or settings.binance_ws_base
 
-    async def get(path: str):
-        r = await client.get(path, params={"symbol": symbol})
-        r.raise_for_status()
-        return r.json()
+    @property
+    def url(self) -> str:
+        streams = "/".join(f"{s.lower()}@markPrice@1s" for s in self.symbols)
+        return f"{self.ws_base}{streams}"
 
-    return await asyncio.gather(
-        get("/fapi/v1/ticker/price"),
-        get("/fapi/v1/premiumIndex"),
-        get("/fapi/v1/openInterest"),
+    async def events(self):
+        backoff = 1
+        while True:
+            try:
+                async with websockets.connect(self.url, ping_interval=120, ping_timeout=30, close_timeout=5, max_queue=4096) as ws:
+                    backoff = 1
+                    async for message in ws:
+                        event = parse_mark_price_message(message)
+                        if event:
+                            yield event
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+
+def parse_mark_price_message(message: str | bytes | dict) -> MarkPriceEvent | None:
+    import json
+    if isinstance(message, (str, bytes)):
+        payload = json.loads(message)
+    else:
+        payload = message
+    data = payload.get("data", payload)
+    if data.get("e") != "markPriceUpdate":
+        return None
+    event_ms = int(data.get("E") or data.get("T") or 0)
+    return MarkPriceEvent(
+        symbol=data["s"],
+        mark_price=float(data["p"]),
+        index_price=float(data["i"]) if data.get("i") not in (None, "") else None,
+        funding_rate=float(data["r"]) if data.get("r") not in (None, "") else None,
+        event_time=datetime.fromtimestamp(event_ms / 1000, tz=timezone.utc),
     )
