@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import asyncio
+import logging
 import httpx
 import websockets
 from ..config import settings
+
+log = logging.getLogger("thesisguard.binance")
 
 
 @dataclass(slots=True)
@@ -54,15 +57,24 @@ class BinanceMarkPriceStream:
         backoff = 1
         while True:
             try:
-                async with websockets.connect(self.url, ping_interval=120, ping_timeout=30, close_timeout=5, max_queue=4096) as ws:
+                log.info("opening Binance USD-M websocket: %s", self.url)
+                async with websockets.connect(
+                    self.url,
+                    ping_interval=120,
+                    ping_timeout=30,
+                    close_timeout=5,
+                    max_queue=4096,
+                ) as ws:
                     backoff = 1
+                    log.info("Binance USD-M websocket connected")
                     async for message in ws:
                         event = parse_mark_price_message(message)
                         if event:
                             yield event
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                log.warning("Binance websocket connection/read failed: %r; retrying in %ss", exc, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
