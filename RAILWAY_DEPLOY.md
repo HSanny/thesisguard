@@ -165,3 +165,23 @@ Telegram health notifications:
 
 After Telegram delivery has been verified, set `TELEGRAM_SEND_STARTUP=false` to
 avoid restart noise during deployments.
+
+
+## Telegram language
+
+Set on the worker service:
+
+```text
+TELEGRAM_LANGUAGE=bilingual
+```
+
+Allowed values:
+
+- `bilingual` — Chinese first, followed by English
+- `zh` — Chinese only
+- `en` — English only
+
+This applies to risk alerts, feed-health messages, planned-entry alerts, macro reminders
+and market-intelligence notifications. External news headlines and source excerpts remain
+in their original language for provenance; ThesisGuard adds localized structured labels
+and interpretation around them.
