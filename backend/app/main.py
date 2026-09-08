@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func
-from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent
+from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent, MarketSourceSnapshot
 from .portfolio import load_portfolio, save_portfolio, ensure_portfolio_seeded
 
 app = FastAPI(title="ThesisGuard", version="0.3.1")
@@ -55,6 +55,35 @@ def latest_market() -> list[dict]:
             if row:
                 rows.append(_tick(row))
     return sorted(rows, key=lambda x: x["symbol"])
+
+
+@app.get("/api/market/sources/latest")
+def latest_market_sources() -> list[dict]:
+    with SessionLocal() as db:
+        pairs = db.execute(
+            select(MarketSourceSnapshot.source, MarketSourceSnapshot.symbol).distinct()
+        ).all()
+        rows = []
+        for source, symbol in pairs:
+            row = db.scalar(
+                select(MarketSourceSnapshot)
+                .where(MarketSourceSnapshot.source == source)
+                .where(MarketSourceSnapshot.symbol == symbol)
+                .order_by(MarketSourceSnapshot.received_at.desc())
+                .limit(1)
+            )
+            if row:
+                rows.append({
+                    "source": row.source,
+                    "symbol": row.symbol,
+                    "mark_price": row.mark_price,
+                    "index_price": row.index_price,
+                    "funding_rate": row.funding_rate,
+                    "open_interest_usd": row.open_interest_usd,
+                    "source_timestamp": row.source_timestamp.isoformat() if row.source_timestamp else None,
+                    "received_at": row.received_at.isoformat(),
+                })
+    return sorted(rows, key=lambda x: (x["symbol"], x["source"]))
 
 
 @app.get("/api/market/history/{symbol}")
@@ -158,8 +187,9 @@ def dashboard() -> str:
 <style>
 :root{font-family:Inter,system-ui,sans-serif;background:#0b0d10;color:#e8eaed}body{margin:0}.wrap{max-width:1280px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:end;gap:16px}.muted{color:#8f98a3}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:20px 0}.card{background:#14181d;border:1px solid #262c33;border-radius:14px;padding:16px}.sym{font-weight:700;font-size:18px}.price{font-size:28px;font-weight:750;margin:8px 0}.ok{color:#66d19e}.warn{color:#f6c85f}.bad{color:#ff7b72}.pill{font-size:12px;padding:3px 8px;border-radius:999px;background:#222831}.row{display:flex;justify-content:space-between;gap:10px;margin-top:7px}textarea{width:100%;min-height:480px;background:#0d1117;color:#dce3ea;border:1px solid #30363d;border-radius:10px;padding:12px;box-sizing:border-box}button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #252b31;font-size:13px}@media(max-width:700px){.wrap{padding:14px}.top{display:block}}
 </style></head><body><div class='wrap'>
-<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.3.1 INTEL</span></h1><div class='muted'>Thesis-aware market monitoring · Binance WS primary + REST validation</div></div><div id='health' class='muted'>checking worker…</div></div>
+<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.3.1 INTEL</span></h1><div class='muted'>Thesis-aware market monitoring · Binance WS + OKX + Bybit cross-exchange consensus</div></div><div id='health' class='muted'>checking worker…</div></div>
 <div id='market' class='grid'></div>
+<div class='card'><h2>Cross-exchange sources</h2><div id='sources' class='muted'>loading…</div></div>
 <div class='card'><h2>Upcoming catalysts</h2><div id='upcoming' class='muted'>loading…</div></div>
 <div class='card' style='margin-top:12px'><h2>Market intelligence</h2><div id='intel' class='muted'>loading…</div></div>
 <div class='card' style='margin-top:12px'><h2>Portfolio / thesis rules</h2><p class='muted'>Stored in Postgres. Saving here updates both API and worker without redeploy.</p><textarea id='portfolio'></textarea><div style='margin-top:10px'><button onclick='savePortfolio()'>Save live rules</button> <span id='saved' class='muted'></span></div></div>
@@ -169,15 +199,17 @@ let portfolioLoaded=false;
 function f(x,d=4){return x==null?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:d})}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function refresh(){
- const [m,p,a,h,u,i]=await Promise.all([
+ const [m,p,a,h,u,i,s]=await Promise.all([
    fetch('/api/market/latest').then(r=>r.json()),
    fetch('/api/portfolio').then(r=>r.json()),
    fetch('/api/alerts?limit=20').then(r=>r.json()),
    fetch('/api/health').then(r=>r.json()),
    fetch('/api/intelligence/upcoming?hours=168&min_importance=6').then(r=>r.json()),
-   fetch('/api/intelligence/events?limit=30&min_importance=5').then(r=>r.json())
+   fetch('/api/intelligence/events?limit=30&min_importance=5').then(r=>r.json()),
+   fetch('/api/market/sources/latest').then(r=>r.json())
  ]);
- document.getElementById('market').innerHTML=m.length?m.map(x=>`<div class='card'><div class='row'><span class='sym'>${x.symbol}</span><span class='pill ${x.source_conflict?'bad':x.source_confidence==='high'?'ok':'warn'}'>${x.source_conflict?'SOURCE CONFLICT':x.source_confidence.toUpperCase()}</span></div><div class='price'>${f(x.mark_price,6)}</div><div class='row'><span class='muted'>REST check</span><span>${f(x.rest_price,6)}</span></div><div class='row'><span class='muted'>Funding</span><span>${x.funding_rate==null?'—':(x.funding_rate*100).toFixed(5)+'%'}</span></div><div class='row'><span class='muted'>OI</span><span>${f(x.open_interest,0)}</span></div><div class='row'><span class='muted'>Spread</span><span>${x.spread_bps==null?'—':x.spread_bps.toFixed(2)+' bps'}</span></div></div>`).join(''):`<div class='card muted'>Waiting for worker market stream…</div>`;
+ document.getElementById('market').innerHTML=m.length?m.map(x=>`<div class='card'><div class='row'><span class='sym'>${x.symbol}</span><span class='pill ${x.source_conflict?'bad':x.source_confidence==='high'?'ok':'warn'}'>${x.source_conflict?'SOURCE CONFLICT':x.source_confidence.toUpperCase()}</span></div><div class='price'>${f(x.mark_price,6)}</div><div class='row'><span class='muted'>Consensus ref</span><span>${f(x.rest_price,6)}</span></div><div class='row'><span class='muted'>Funding</span><span>${x.funding_rate==null?'—':(x.funding_rate*100).toFixed(5)+'%'}</span></div><div class='row'><span class='muted'>OI</span><span>${f(x.open_interest,0)}</span></div><div class='row'><span class='muted'>Spread</span><span>${x.spread_bps==null?'—':x.spread_bps.toFixed(2)+' bps'}</span></div></div>`).join(''):`<div class='card muted'>Waiting for worker market stream…</div>`;
+ document.getElementById('sources').innerHTML=s.length?`<table><tr><th>Asset</th><th>Source</th><th>Mark</th><th>Funding</th><th>OI USD</th><th>Updated</th></tr>${s.map(x=>`<tr><td>${esc(x.symbol)}</td><td>${esc(x.source.toUpperCase())}</td><td>${f(x.mark_price,6)}</td><td>${x.funding_rate==null?'—':(x.funding_rate*100).toFixed(5)+'%'}</td><td>${f(x.open_interest_usd,0)}</td><td>${esc(x.received_at)}</td></tr>`).join('')}</table>`:'<span class="muted">Waiting for OKX / Bybit validation snapshots…</span>';
  if(!portfolioLoaded){document.getElementById('portfolio').value=JSON.stringify(p,null,2);portfolioLoaded=true;}
  document.getElementById('upcoming').innerHTML=u.length?`<table><tr><th>Time</th><th>Event</th><th>Importance</th><th>Source</th></tr>${u.map(x=>`<tr><td>${esc(x.event_time??'—')}</td><td>${esc(x.title)}</td><td>${f(x.importance,1)}/10</td><td>${esc(x.source)}</td></tr>`).join('')}</table>`:'<span class="muted">No high-impact scheduled catalysts in the selected window.</span>';
  document.getElementById('intel').innerHTML=i.length?`<table><tr><th>Seen</th><th>Event</th><th>Impact</th><th>Confidence</th><th>Source</th></tr>${i.map(x=>`<tr><td>${esc(x.first_seen_at)}</td><td>${esc(x.title)}</td><td>${f(x.importance,1)}/10</td><td>${esc(x.confidence)}</td><td>${esc(x.source)}</td></tr>`).join('')}</table>`:'<span class="muted">Waiting for intelligence collectors…</span>';
