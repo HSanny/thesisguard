@@ -34,7 +34,7 @@ CRYPTO_NAME_MAP = {
     "xau": "XAUUSDT",
 }
 
-BROAD_THEMES = {"macro", "rates", "geopolitics", "energy", "inflation", "regulation", "crypto"}
+BROAD_THEMES = {"macro", "rates", "geopolitics", "energy", "inflation", "regulation"}
 
 
 def _aware(dt: datetime) -> datetime:
