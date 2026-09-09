@@ -238,3 +238,28 @@ With event-only mode enabled:
 - only a critical all-market-source outage may interrupt the user with a system alert
 
 Market data is therefore context for an event, not an alert trigger.
+
+
+## Interactive Telegram analyst
+
+Enable on the worker:
+
+```text
+TELEGRAM_QUERIES_ENABLED=true
+TELEGRAM_QUERY_DEFAULT_HOURS=6
+```
+
+The same Telegram bot can answer read-only queries from the configured
+`TELEGRAM_CHAT_ID`. Other chat IDs are ignored.
+
+Examples:
+
+- `/market` or `how's the market going?`
+- `/recent 6h` or `最近6小时发生了什么`
+- `/portfolio 24h` or `最近事件对我的持仓有什么影响`
+- `/asset LINK 12h` or `LINK 最近有什么事`
+- `/upcoming 7d` or `未来7天有什么重大事件`
+
+Answers are generated from ThesisGuard's own Postgres event store, portfolio
+configuration and multi-source market data. Queries are read-only and do not
+modify positions or place orders.
