@@ -923,8 +923,9 @@ async def main() -> None:
     if settings.telegram_alerts_enabled:
         if telegram_configured():
             log.info("Telegram alerts enabled")
-            if settings.telegram_send_startup:
-                # Never block market collection on Telegram flood control or network errors.
+            if settings.telegram_send_startup and not settings.telegram_event_only:
+                # Event-only production mode intentionally suppresses deployment/startup noise,
+                # even if an old Railway environment variable still enables startup messages.
                 background.append(asyncio.create_task(send_startup_message(len(state.symbols))))
         else:
             log.warning(
