@@ -26,6 +26,7 @@ from .services.intelligence import (
     upcoming_stage,
     upsert_events,
 )
+from .services.telegram_query import telegram_query_loop
 from .services.telegram import (
     format_alert_message,
     localized,
@@ -941,6 +942,7 @@ async def main() -> None:
         intelligence_news_loop(state),
         intelligence_calendar_loop(),
         upcoming_event_loop(state),
+        telegram_query_loop(),
     )
 
 
