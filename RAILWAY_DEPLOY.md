@@ -263,3 +263,30 @@ Examples:
 Answers are generated from ThesisGuard's own Postgres event store, portfolio
 configuration and multi-source market data. Queries are read-only and do not
 modify positions or place orders.
+
+
+## Telegram groups and Group Privacy Mode
+
+Telegram enables Group Privacy Mode for bots by default. With privacy mode enabled,
+ordinary group text such as `how's the market going?` is not delivered to the bot.
+Commands explicitly addressed to the bot, such as `/market@YourBotUsername`, are
+delivered.
+
+For natural-language queries inside a group:
+
+1. Open `@BotFather`.
+2. Run `/setprivacy`.
+3. Select the ThesisGuard bot.
+4. Choose **Disable**.
+5. Remove the bot from the target group and add it back so the new privacy setting
+   takes effect.
+
+Alternatively, making the bot a group admin also allows it to receive ordinary group
+messages.
+
+ThesisGuard still filters messages after Telegram delivery: unrelated group chatter is
+ignored and does not trigger a reply.
+
+If event alerts already arrive in the same group, `TELEGRAM_CHAT_ID` is already
+pointing to the correct group. If the bot posts alerts somewhere else, configure the
+target group ID instead.
