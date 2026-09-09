@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     telegram_alerts_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
-    telegram_send_startup: bool = True
+    telegram_send_startup: bool = False
     telegram_language: str = "bilingual"
     telegram_event_only: bool = True
     telegram_feed_health_enabled: bool = False
