@@ -314,7 +314,7 @@ def _upcoming_overview(hours: int) -> str:
     return localized("\n".join(en), "\n".join(zh))
 
 
-def build_query_response(text: str) -> str:
+def build_query_response(text: str) -> str | None:
     stripped = text.strip()
     lower = stripped.lower()
     hours = _parse_hours(stripped)
@@ -363,10 +363,9 @@ def build_query_response(text: str) -> str:
     ):
         return _market_overview(hours)
 
-    return localized(
-        "I can answer market overview, recent events, portfolio-event correlation, asset news, and upcoming catalysts. Send /help for examples.",
-        "我目前可以回答市场概览、近期事件、持仓事件关联、单个资产新闻和未来重大事件。发送 /help 查看示例。",
-    )
+    # In group chats, ignore unrelated conversation rather than turning the bot
+    # into a noisy auto-responder when privacy mode is disabled.
+    return None
 
 
 async def telegram_query_loop() -> None:
@@ -409,6 +408,8 @@ async def telegram_query_loop() -> None:
 
                     try:
                         answer = build_query_response(text)
+                        if answer is None:
+                            continue
                     except Exception as exc:
                         log.warning("Telegram query handling failed: %s", type(exc).__name__)
                         answer = localized(
