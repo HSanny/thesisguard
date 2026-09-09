@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent, MarketSourceSnapshot
 from .portfolio import load_portfolio, save_portfolio, ensure_portfolio_seeded
 
-app = FastAPI(title="ThesisGuard", version="0.3.2")
+app = FastAPI(title="ThesisGuard", version="0.3.3")
 
 
 class PortfolioPayload(BaseModel):
@@ -29,7 +29,7 @@ def health() -> dict:
     for h in heartbeats:
         ts = h.updated_at if h.updated_at.tzinfo else h.updated_at.replace(tzinfo=timezone.utc)
         services.append({"service": h.service, "updated_at": ts.isoformat(), "age_seconds": (now-ts).total_seconds(), "detail": json.loads(h.detail or "{}")})
-    return {"ok": True, "service": "thesisguard-api", "version": "0.3.2", "workers": services}
+    return {"ok": True, "service": "thesisguard-api", "version": "0.3.3", "workers": services}
 
 
 @app.get("/api/portfolio")
@@ -183,11 +183,11 @@ def _tick(r: MarketTick) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
     return r"""
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ThesisGuard v0.3.2</title>
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ThesisGuard v0.3.3</title>
 <style>
 :root{font-family:Inter,system-ui,sans-serif;background:#0b0d10;color:#e8eaed}body{margin:0}.wrap{max-width:1280px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:end;gap:16px}.muted{color:#8f98a3}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:20px 0}.card{background:#14181d;border:1px solid #262c33;border-radius:14px;padding:16px}.sym{font-weight:700;font-size:18px}.price{font-size:28px;font-weight:750;margin:8px 0}.ok{color:#66d19e}.warn{color:#f6c85f}.bad{color:#ff7b72}.pill{font-size:12px;padding:3px 8px;border-radius:999px;background:#222831}.row{display:flex;justify-content:space-between;gap:10px;margin-top:7px}textarea{width:100%;min-height:480px;background:#0d1117;color:#dce3ea;border:1px solid #30363d;border-radius:10px;padding:12px;box-sizing:border-box}button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #252b31;font-size:13px}@media(max-width:700px){.wrap{padding:14px}.top{display:block}}
 </style></head><body><div class='wrap'>
-<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.3.2 MULTI-SOURCE</span></h1><div class='muted'>Thesis-aware market monitoring · Binance WS + OKX + Bybit cross-exchange consensus</div></div><div id='health' class='muted'>checking worker…</div></div>
+<div class='top'><div><h1 style='margin-bottom:4px'>ThesisGuard <span class='pill'>v0.3.3 EVENT-DRIVEN</span></h1><div class='muted'>Event-driven market intelligence · prices are context, not alert triggers</div></div><div id='health' class='muted'>checking worker…</div></div>
 <div id='market' class='grid'></div>
 <div class='card'><h2>Cross-exchange sources</h2><div id='sources' class='muted'>loading…</div></div>
 <div class='card'><h2>Upcoming catalysts</h2><div id='upcoming' class='muted'>loading…</div></div>
