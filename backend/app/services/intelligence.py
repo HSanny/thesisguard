@@ -169,6 +169,22 @@ def classify_event(title: str, summary: str = "", *, scheduled: bool = False) ->
         importance = max(importance, 5.5)
         themes.update({"crypto", "catalyst"})
 
+    if any(x in text for x in (
+        "mainnet", "upgrade", "hard fork", "protocol update", "governance proposal",
+        "tokenomics", "token unlock", "partnership", "integration", "adoption",
+        "validator", "staking", "buyback", "burn", "treasury", "reserve",
+        "ccip", "rwa", "swift", "payment abstraction",
+    )):
+        importance = max(importance, 7.0)
+        themes.update({"crypto", "project_update", "thesis_change_candidate"})
+
+    if any(x in text for x in (
+        "delist", "delisting", "lawsuit", "investigation", "shutdown",
+        "critical vulnerability", "network halt", "chain halt", "depeg",
+    )):
+        importance = max(importance, 8.0)
+        themes.update({"crypto", "thesis_risk", "thesis_change_candidate"})
+
     if "hunter biden" in text and any(x in text for x in ("laptop", "token", "coin", "crypto")):
         importance = max(importance, 7.5)
         themes.update({"crypto", "political_memecoin", "catalyst"})
@@ -673,7 +689,12 @@ def upcoming_stage(event_time: datetime | None, now: datetime | None = None) -> 
     return None
 
 
-def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) -> str:
+def format_event_message(
+    event: IntelligenceEvent,
+    *,
+    stage: str | None = None,
+    market_context: list[dict] | None = None,
+) -> str:
     assets = json.loads(event.affected_assets_json or "[]")
     themes = json.loads(event.themes_json or "[]")
     when = event.event_time or event.published_at or event.first_seen_at
@@ -690,8 +711,32 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
         "catalyst": "催化剂", "scheduled": "预定事件", "fomc": "FOMC",
         "monetary_policy": "货币政策", "news_discovery": "新闻发现",
         "political_memecoin": "政治 Meme 币", "crypto_calendar": "加密日历",
+        "project_update": "项目方更新", "thesis_change_candidate": "逻辑变化候选",
+        "thesis_risk": "项目逻辑风险",
     }
     themes_zh = [theme_zh_map.get(t, t) for t in themes]
+
+    market_context = market_context or []
+    if market_context:
+        zh_market_lines = []
+        en_market_lines = []
+        for item in market_context:
+            symbol = item.get("symbol", "—")
+            price = item.get("price")
+            price_text = "—" if price is None else f"{float(price):,.8f}".rstrip("0").rstrip(".")
+            confidence = str(item.get("confidence") or "low").upper()
+            source_count = int(item.get("source_count") or 1)
+            zh_market_lines.append(
+                f"• {symbol}: {price_text} · 共识 {confidence} · {source_count} 个数据源"
+            )
+            en_market_lines.append(
+                f"• {symbol}: {price_text} · consensus {confidence} · {source_count} source(s)"
+            )
+        zh_market = "\n\n事件发生时相关加密资产价格：\n" + "\n".join(zh_market_lines)
+        en_market = "\n\nRelated crypto prices at alert time:\n" + "\n".join(en_market_lines)
+    else:
+        zh_market = ""
+        en_market = ""
 
     zh = (
         f"{prefix_zh}{stage_zh}\n"
@@ -704,6 +749,7 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
         f"来源：{event.source_name}\n"
         f"原文链接：{event.source_url}\n\n"
         f"原文摘要：{summary}"
+        f"{zh_market}"
     )
     en = (
         f"{prefix_en}{stage_en}\n"
@@ -716,5 +762,6 @@ def format_event_message(event: IntelligenceEvent, *, stage: str | None = None) 
         f"Source: {event.source_name}\n"
         f"Source link: {event.source_url}\n\n"
         f"{summary}"
+        f"{en_market}"
     )
     return localized(en, zh)
