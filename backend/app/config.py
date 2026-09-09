@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     telegram_send_startup: bool = True
     telegram_language: str = "bilingual"
-    telegram_feed_health_enabled: bool = True
-    telegram_health_heartbeat_seconds: int = 3600
+    telegram_event_only: bool = True
+    telegram_feed_health_enabled: bool = False
+    telegram_health_heartbeat_seconds: int = 0
+    telegram_critical_system_alerts_enabled: bool = True
 
     intelligence_enabled: bool = True
     intelligence_poll_seconds: int = 120
