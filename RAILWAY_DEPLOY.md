@@ -211,3 +211,30 @@ Confidence policy:
 Per-source mark price, funding rate and open-interest USD snapshots are persisted
 in `market_source_snapshots` and exposed at `/api/market/sources/latest`.
 A single exchange failure does not stop the market worker.
+
+
+## Event-only Telegram mode
+
+Recommended production configuration:
+
+```text
+TELEGRAM_EVENT_ONLY=true
+TELEGRAM_SEND_STARTUP=false
+TELEGRAM_FEED_HEALTH_ENABLED=false
+TELEGRAM_HEALTH_HEARTBEAT_SECONDS=0
+TELEGRAM_CRITICAL_SYSTEM_ALERTS_ENABLED=true
+```
+
+With event-only mode enabled:
+
+- live prices continue to be collected and persisted continuously
+- price moves and configured key levels do not create Telegram alerts
+- planned-entry proximity does not create Telegram alerts
+- routine feed-live/recovered/source-degraded/heartbeat messages are suppressed
+- medium/high-impact news, project updates, thesis-change candidates, scheduled macro
+  events and geopolitical events remain eligible for Telegram delivery
+- event notifications attach current prices for related crypto assets using the
+  cross-exchange consensus state
+- only a critical all-market-source outage may interrupt the user with a system alert
+
+Market data is therefore context for an event, not an alert trigger.
