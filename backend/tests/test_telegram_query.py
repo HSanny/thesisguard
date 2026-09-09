@@ -40,3 +40,7 @@ def test_asset_intent(monkeypatch):
 def test_upcoming_intent(monkeypatch):
     monkeypatch.setattr(tq, "_upcoming_overview", lambda hours: f"UPCOMING:{hours}")
     assert tq.build_query_response("未来7天有什么重大事件") == "UPCOMING:168"
+
+
+def test_unrelated_group_message_is_ignored():
+    assert tq.build_query_response("anyone free for lunch later?") is None
