@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from backend.app.services.intelligence import (
     annotate_corroboration,
     classify_event,
+    format_event_message,
     parse_bls_ics,
     parse_gdelt,
     parse_fomc_calendar_html,
@@ -135,3 +136,55 @@ def test_cross_source_corroboration_counts_independent_domains():
     annotate_corroboration(events)
     assert events[0].metadata["corroboration_count"] == 2
     assert events[1].metadata["corroboration_count"] == 2
+
+
+def test_project_update_is_thesis_change_candidate():
+    importance, assets, themes = classify_event(
+        "Chainlink announces major CCIP integration and protocol update"
+    )
+    assert importance >= 7.0
+    assert "LINKUSDT" in assets
+    assert "project_update" in themes
+    assert "thesis_change_candidate" in themes
+
+
+def test_event_message_includes_market_context():
+    from backend.app.db import IntelligenceEvent
+    from backend.app.config import settings
+
+    previous = settings.telegram_language
+    settings.telegram_language = "bilingual"
+    try:
+        event = IntelligenceEvent(
+            canonical_key="test:event",
+            event_kind="news",
+            status="reported",
+            title="Chainlink announces major CCIP integration",
+            summary="A meaningful protocol ecosystem update.",
+            source_name="Official source",
+            source_url="https://example.com",
+            source_tier=1,
+            confidence="high",
+            importance=8.0,
+            affected_assets_json='["LINKUSDT"]',
+            themes_json='["crypto","project_update","thesis_change_candidate"]',
+            metadata_json="{}",
+        )
+        text = format_event_message(
+            event,
+            market_context=[
+                {
+                    "symbol": "LINKUSDT",
+                    "price": 13.245,
+                    "confidence": "high",
+                    "source_count": 3,
+                }
+            ],
+        )
+    finally:
+        settings.telegram_language = previous
+
+    assert "LINKUSDT: 13.245" in text
+    assert "事件发生时相关加密资产价格" in text
+    assert "Related crypto prices at alert time" in text
+    assert "3 个数据源" in text
