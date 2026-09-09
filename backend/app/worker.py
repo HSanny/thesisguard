@@ -439,6 +439,10 @@ async def persistence_loop(state: WorkerState) -> None:
             state.last_tick_persisted_at = now
             persisted_this_cycle += 1
 
+            # Event-only mode uses market data as context, never as an alert trigger.
+            if settings.telegram_event_only:
+                continue
+
             if symbol in positions:
                 decision = evaluate_position(positions[symbol], s)
                 if decision:
@@ -569,10 +573,103 @@ async def portfolio_refresh_loop(state: WorkerState) -> None:
         await asyncio.sleep(settings.portfolio_refresh_seconds)
 
 
-async def _push_system_message(text: str) -> bool:
+async def _push_system_message(text: str, *, critical: bool = False) -> bool:
     if not settings.telegram_alerts_enabled:
         return False
+    if settings.telegram_event_only and not critical:
+        return False
     return await send_telegram_message(text)
+
+
+def _event_market_context(event: IntelligenceEvent, state: WorkerState) -> list[dict]:
+    try:
+        assets = json.loads(event.affected_assets_json or "[]")
+        themes = set(json.loads(event.themes_json or "[]"))
+    except Exception:
+        assets = []
+        themes = set()
+
+    symbols = [
+        str(symbol).upper()
+        for symbol in assets
+        if str(symbol).upper().endswith("USDT") and str(symbol).upper() != "XAUUSDT"
+    ]
+
+    # Broad crypto events without a specific token still get BTC/ETH market context.
+    if "crypto" in themes and not symbols:
+        symbols = ["BTCUSDT", "ETHUSDT"]
+
+    context: list[dict] = []
+    now = datetime.now(timezone.utc)
+    for symbol in symbols[:6]:
+        s = state.states.get(symbol)
+        if not s or not s.event:
+            continue
+        consensus = build_multi_source_consensus(
+            s.event.mark_price,
+            _fresh_external_prices(s, now),
+            settings.price_conflict_bps,
+        )
+        context.append({
+            "symbol": symbol,
+            "price": s.event.mark_price,
+            "confidence": consensus.confidence,
+            "source_count": consensus.source_count,
+        })
+    return context
+
+
+async def critical_source_health_loop(state: WorkerState) -> None:
+    """Only interrupt the user when all usable market-price sources are unavailable."""
+    if not settings.telegram_critical_system_alerts_enabled:
+        return
+
+    started_at = datetime.now(timezone.utc)
+    outage_announced = False
+    threshold = max(180, settings.stale_after_seconds * 2)
+
+    while True:
+        now = datetime.now(timezone.utc)
+        primary_live = bool(
+            state.last_tick_persisted_at
+            and (now - state.last_tick_persisted_at).total_seconds() <= threshold
+        )
+        external_live = any(
+            bool(_fresh_external_prices(symbol_state, now))
+            for symbol_state in state.states.values()
+        )
+        all_sources_lost = not primary_live and not external_live
+        past_startup_grace = (now - started_at).total_seconds() > threshold
+
+        if all_sources_lost and past_startup_grace and not outage_announced:
+            outage_announced = True
+            await _push_system_message(localized(
+                (
+                    "🔴 ThesisGuard CRITICAL DATA OUTAGE\n"
+                    "No usable live price source is currently available from Binance WS, OKX or Bybit.\n"
+                    "Event alerts will continue to collect news, but market-price context may be unavailable."
+                ),
+                (
+                    "🔴 ThesisGuard 严重数据中断\n"
+                    "Binance WebSocket、OKX 与 Bybit 当前都没有可用的实时价格数据。\n"
+                    "新闻事件仍会继续采集，但事件推送中的市场价格上下文可能暂时缺失。"
+                ),
+            ), critical=True)
+
+        elif outage_announced and (primary_live or external_live):
+            outage_announced = False
+            await _push_system_message(localized(
+                (
+                    "✅ ThesisGuard MARKET DATA RECOVERED\n"
+                    "At least one live market-price source is available again."
+                ),
+                (
+                    "✅ ThesisGuard 市场数据已恢复\n"
+                    "至少一个实时市场价格数据源已经恢复可用。"
+                ),
+            ), critical=True)
+
+        await asyncio.sleep(30)
 
 
 async def market_health_loop(state: WorkerState) -> None:
@@ -659,7 +756,7 @@ async def market_health_loop(state: WorkerState) -> None:
         await asyncio.sleep(10)
 
 
-async def _process_new_intelligence_events(events: list[IntelligenceEvent]) -> None:
+async def _process_new_intelligence_events(events: list[IntelligenceEvent], state: WorkerState) -> None:
     for event in events:
         if not immediate_push_candidate(event):
             continue
@@ -671,7 +768,12 @@ async def _process_new_intelligence_events(events: list[IntelligenceEvent]) -> N
             f"importance={event.importance:.1f}/10, source tier={event.source_tier}."
         )
         record_intelligence_alert(event, dedupe_key, explanation)
-        delivered = await send_telegram_message(format_event_message(event))
+        delivered = await send_telegram_message(
+            format_event_message(
+                event,
+                market_context=_event_market_context(event, state),
+            )
+        )
         log.info(
             "intelligence Telegram %s: %s",
             "delivered" if delivered else "not delivered",
@@ -679,7 +781,7 @@ async def _process_new_intelligence_events(events: list[IntelligenceEvent]) -> N
         )
 
 
-async def intelligence_news_loop() -> None:
+async def intelligence_news_loop(state: WorkerState) -> None:
     if not settings.intelligence_enabled:
         return
 
@@ -726,7 +828,7 @@ async def intelligence_news_loop() -> None:
                 created = upsert_events(collected)
                 if created:
                     log.info("intelligence ingestion created %s new event(s)", len(created))
-                    await _process_new_intelligence_events(created)
+                    await _process_new_intelligence_events(created, state)
 
             _heartbeat("worker-intel", {
                 "last_news_poll": datetime.now(timezone.utc).isoformat(),
@@ -765,7 +867,7 @@ async def intelligence_calendar_loop() -> None:
             await asyncio.sleep(settings.intelligence_calendar_poll_seconds)
 
 
-async def upcoming_event_loop() -> None:
+async def upcoming_event_loop(state: WorkerState) -> None:
     """Send 24h, 2h and 15m reminders for high-impact scheduled events."""
     while True:
         now = datetime.now(timezone.utc)
@@ -793,7 +895,13 @@ async def upcoming_event_loop() -> None:
                 continue
             explanation = f"Scheduled high-impact event reminder ({stage}) from {event.source_name}."
             record_intelligence_alert(event, dedupe_key, explanation)
-            delivered = await send_telegram_message(format_event_message(event, stage=stage))
+            delivered = await send_telegram_message(
+                format_event_message(
+                    event,
+                    stage=stage,
+                    market_context=_event_market_context(event, state),
+                )
+            )
             log.info(
                 "upcoming event Telegram %s: %s [%s]",
                 "delivered" if delivered else "not delivered",
@@ -829,9 +937,10 @@ async def main() -> None:
         multi_source_validation_loop(state),
         portfolio_refresh_loop(state),
         market_health_loop(state),
-        intelligence_news_loop(),
+        critical_source_health_loop(state),
+        intelligence_news_loop(state),
         intelligence_calendar_loop(),
-        upcoming_event_loop(),
+        upcoming_event_loop(state),
     )
 
 
