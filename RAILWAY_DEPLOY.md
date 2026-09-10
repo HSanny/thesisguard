@@ -290,3 +290,30 @@ ignored and does not trigger a reply.
 If event alerts already arrive in the same group, `TELEGRAM_CHAT_ID` is already
 pointing to the correct group. If the bot posts alerts somewhere else, configure the
 target group ID instead.
+
+
+## Resilient intelligence sources
+
+Recommended worker variables:
+
+```text
+GOOGLE_NEWS_FALLBACK_ENABLED=true
+COINDESK_RSS_ENABLED=true
+SOURCE_BLOCK_BACKOFF_SECONDS=900
+```
+
+The breaking-news pipeline is resilient by design:
+
+- GDELT remains a broad discovery source.
+- Individual GDELT topic failures do not abort the rest of the batch.
+- If GDELT produces no usable events, Google News RSS search is used as a
+  low-trust discovery fallback and the underlying publisher is retained for
+  source-tier/corroboration logic.
+- CoinDesk's official RSS feed is ingested independently for crypto coverage.
+- Restricted/rate-limited exchange sources (HTTP 403/429/451) back off instead
+  of retrying every 30 seconds.
+- HTTP warning logs include the actual status code and retry-after header where
+  available.
+
+Fallback discovery does not automatically increase confidence. Existing source-tier,
+importance and independent-source corroboration gates still control Telegram delivery.
