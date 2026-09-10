@@ -210,11 +210,16 @@ def _headline_tokens(title: str) -> set[str]:
     return {t for t in tokens if len(t) > 2 and t not in _STOPWORDS}
 
 
+def _corroboration_domain(event: NormalizedEvent) -> str:
+    publisher_url = str(event.metadata.get("publisher_url") or "")
+    return _domain(publisher_url or event.source_url) or event.source_name.lower()
+
+
 def annotate_corroboration(events: list[NormalizedEvent], threshold: float = 0.52) -> list[NormalizedEvent]:
     """Annotate similar headlines with independent-source corroboration metadata."""
     token_sets = [_headline_tokens(e.title) for e in events]
     for i, event in enumerate(events):
-        domains = {_domain(event.source_url) or event.source_name.lower()}
+        domains = {_corroboration_domain(event)}
         for j, other in enumerate(events):
             if i == j:
                 continue
@@ -223,7 +228,7 @@ def annotate_corroboration(events: list[NormalizedEvent], threshold: float = 0.5
                 continue
             overlap = len(a & b) / max(1, len(a | b))
             if overlap >= threshold:
-                domains.add(_domain(other.source_url) or other.source_name.lower())
+                domains.add(_corroboration_domain(other))
         event.metadata["corroboration_count"] = len(domains)
         event.metadata["corroborating_sources"] = sorted(domains)[:12]
     return events
@@ -618,12 +623,15 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[NormalizedEvent]:
             response = await client.get(GDELT_DOC_URL, params=params)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
             log.warning(
                 "GDELT topic fetch failed: topic=%s status=%s retry_after=%s",
                 topic,
-                exc.response.status_code,
+                status,
                 exc.response.headers.get("retry-after"),
             )
+            if status in {403, 429, 451}:
+                break
             continue
         except Exception as exc:
             log.warning(
