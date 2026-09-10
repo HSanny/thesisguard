@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     gdelt_enabled: bool = True
     gdelt_timespan: str = "30min"
     gdelt_max_records: int = 50
+    google_news_fallback_enabled: bool = True
+    coindesk_rss_enabled: bool = True
+    source_block_backoff_seconds: int = 900
     coinmarketcal_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
