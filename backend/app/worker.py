@@ -3,7 +3,7 @@ import json
 import logging
 import httpx
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from .config import settings
 from .db import init_db, SessionLocal, MarketTick, AlertRecord, ServiceHeartbeat, IntelligenceEvent, MarketSourceSnapshot
@@ -308,19 +308,34 @@ async def multi_source_validation_loop(state: WorkerState) -> None:
         "okx": OKXPublicMarketClient(settings.okx_rest_base),
     }
     previous_external_count = 0
+    source_backoff_until: dict[str, datetime] = {}
 
     while True:
         symbols = list(state.symbols)
         now = datetime.now(timezone.utc)
+        active_clients = [
+            (source, client)
+            for source, client in clients.items()
+            if now >= source_backoff_until.get(source, datetime.min.replace(tzinfo=timezone.utc))
+        ]
         results = await asyncio.gather(
-            *(client.snapshots(symbols) for client in clients.values()),
+            *(client.snapshots(symbols) for _, client in active_clients),
             return_exceptions=True,
         )
 
         source_status: dict[str, dict] = {}
         snapshots_to_store: list[MarketSourceSnapshot] = []
 
-        for (source, _client), result in zip(clients.items(), results):
+        for source in clients:
+            blocked_until = source_backoff_until.get(source)
+            if blocked_until and now < blocked_until:
+                source_status[source] = {
+                    "status": "backoff",
+                    "retry_at": blocked_until.isoformat(),
+                    "symbols": 0,
+                }
+
+        for (source, _client), result in zip(active_clients, results):
             if isinstance(result, Exception):
                 status = None
                 retry_after = None
@@ -340,6 +355,12 @@ async def multi_source_validation_loop(state: WorkerState) -> None:
                     status,
                     retry_after,
                 )
+                if status in {403, 429, 451}:
+                    source_backoff_until[source] = now + timedelta(
+                        seconds=settings.source_block_backoff_seconds
+                    )
+                    source_status[source]["status"] = "backoff"
+                    source_status[source]["retry_at"] = source_backoff_until[source].isoformat()
                 continue
 
             source_status[source] = {
