@@ -24,6 +24,8 @@ BLS_ICS_URL = "https://www.bls.gov/schedule/news_release/bls.ics"
 FED_MONETARY_RSS_URL = "https://www.federalreserve.gov/feeds/press_monetary.xml"
 FOMC_CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
+COINDESK_RSS_URL = "https://www.coindesk.com/arc/outboundfeeds/rss/"
 COINMARKETCAL_URL = "https://api.coinmarketcal.com/v2/events"
 
 GDELT_TOPICS = {
@@ -357,6 +359,49 @@ def parse_rss(xml_text: str, *, source_name: str, event_kind: str = "news") -> l
     return events
 
 
+
+
+def parse_google_news_rss(xml_text: str, *, topic: str) -> list[NormalizedEvent]:
+    root = ElementTree.fromstring(xml_text)
+    events: list[NormalizedEvent] = []
+    for item in root.findall(".//item"):
+        title = _clean_text(item.findtext("title"))
+        link = _clean_text(item.findtext("link"))
+        description = _clean_text(item.findtext("description"))
+        guid = _clean_text(item.findtext("guid")) or link or title
+        pub_raw = _clean_text(item.findtext("pubDate"))
+        source_node = item.find("source")
+        publisher = _clean_text(source_node.text if source_node is not None else "") or "Google News"
+        publisher_url = ""
+        if source_node is not None:
+            publisher_url = _clean_text(source_node.attrib.get("url"))
+        try:
+            published = parsedate_to_datetime(pub_raw).astimezone(timezone.utc) if pub_raw else None
+        except Exception:
+            published = None
+
+        tier = source_tier(publisher_url or link)
+        importance, assets, themes = classify_event(title, description)
+        themes = sorted(set(themes + [topic, "news_discovery", "google_news_fallback"]))
+        events.append(NormalizedEvent(
+            canonical_key=_canonical_key("google_news", guid),
+            event_kind="news",
+            status="reported",
+            title=title,
+            summary=description[:2000],
+            source_name=publisher,
+            source_url=link,
+            source_tier=tier,
+            confidence=confidence_for_tier(tier),
+            importance=importance,
+            published_at=published,
+            affected_assets=assets,
+            themes=themes,
+            metadata={"publisher_url": publisher_url, "discovery_source": "google_news"},
+        ))
+    return events
+
+
 def _unfold_ics(text: str) -> list[str]:
     lines: list[str] = []
     for raw in text.replace("\r\n", "\n").split("\n"):
@@ -527,6 +572,37 @@ async def fetch_fed_monetary(client: httpx.AsyncClient) -> list[NormalizedEvent]
     return parse_rss(response.text, source_name="Federal Reserve", event_kind="official_release")
 
 
+async def fetch_coindesk_rss(client: httpx.AsyncClient) -> list[NormalizedEvent]:
+    response = await client.get(COINDESK_RSS_URL)
+    response.raise_for_status()
+    return parse_rss(response.text, source_name="CoinDesk", event_kind="news")
+
+
+async def fetch_google_news_fallback(client: httpx.AsyncClient) -> list[NormalizedEvent]:
+    all_events: list[NormalizedEvent] = []
+    for topic, query in GDELT_TOPICS.items():
+        try:
+            response = await client.get(
+                GOOGLE_NEWS_RSS_URL,
+                params={"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+            )
+            response.raise_for_status()
+            all_events.extend(parse_google_news_rss(response.text, topic=topic))
+        except httpx.HTTPStatusError as exc:
+            log.warning(
+                "Google News fallback failed: topic=%s status=%s",
+                topic,
+                exc.response.status_code,
+            )
+        except Exception as exc:
+            log.warning(
+                "Google News fallback failed: topic=%s error=%s",
+                topic,
+                type(exc).__name__,
+            )
+    return all_events
+
+
 async def fetch_gdelt(client: httpx.AsyncClient) -> list[NormalizedEvent]:
     all_events: list[NormalizedEvent] = []
     for topic, query in GDELT_TOPICS.items():
@@ -538,12 +614,33 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[NormalizedEvent]:
             "timespan": settings.gdelt_timespan,
             "sort": "datedesc",
         }
-        response = await client.get(GDELT_DOC_URL, params=params)
-        response.raise_for_status()
+        try:
+            response = await client.get(GDELT_DOC_URL, params=params)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            log.warning(
+                "GDELT topic fetch failed: topic=%s status=%s retry_after=%s",
+                topic,
+                exc.response.status_code,
+                exc.response.headers.get("retry-after"),
+            )
+            continue
+        except Exception as exc:
+            log.warning(
+                "GDELT topic fetch failed: topic=%s error=%s",
+                topic,
+                type(exc).__name__,
+            )
+            continue
+
         try:
             data = response.json()
         except Exception:
-            log.warning("GDELT returned non-JSON response for topic=%s", topic)
+            log.warning(
+                "GDELT returned non-JSON response: topic=%s content_type=%s",
+                topic,
+                response.headers.get("content-type"),
+            )
             continue
         all_events.extend(parse_gdelt(data, topic=topic))
     return all_events
