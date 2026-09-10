@@ -17,9 +17,11 @@ from .services.intelligence import (
     annotate_corroboration,
     fetch_bls_calendar,
     fetch_coinmarketcal,
+    fetch_coindesk_rss,
     fetch_fed_monetary,
     fetch_fomc_calendar,
     fetch_gdelt,
+    fetch_google_news_fallback,
     format_event_message,
     immediate_push_candidate,
     record_intelligence_alert,
@@ -320,12 +322,24 @@ async def multi_source_validation_loop(state: WorkerState) -> None:
 
         for (source, _client), result in zip(clients.items(), results):
             if isinstance(result, Exception):
+                status = None
+                retry_after = None
+                if isinstance(result, httpx.HTTPStatusError):
+                    status = result.response.status_code
+                    retry_after = result.response.headers.get("retry-after")
                 source_status[source] = {
                     "status": "error",
                     "error_type": type(result).__name__,
+                    "http_status": status,
                     "symbols": 0,
                 }
-                log.warning("%s market validation failed: %s", source, type(result).__name__)
+                log.warning(
+                    "%s market validation failed: error=%s status=%s retry_after=%s",
+                    source,
+                    type(result).__name__,
+                    status,
+                    retry_after,
+                )
                 continue
 
             source_status[source] = {
@@ -799,11 +813,46 @@ async def intelligence_news_loop(state: WorkerState) -> None:
             except Exception as exc:
                 log.warning("Fed intelligence fetch failed: %s", type(exc).__name__)
 
+            if settings.coindesk_rss_enabled:
+                try:
+                    collected.extend(await fetch_coindesk_rss(client))
+                except httpx.HTTPStatusError as exc:
+                    log.warning(
+                        "CoinDesk RSS fetch failed: status=%s",
+                        exc.response.status_code,
+                    )
+                except Exception as exc:
+                    log.warning("CoinDesk RSS fetch failed: %s", type(exc).__name__)
+
+            gdelt_events = []
             if settings.gdelt_enabled:
                 try:
-                    collected.extend(await fetch_gdelt(client))
+                    gdelt_events = await fetch_gdelt(client)
+                    collected.extend(gdelt_events)
+                except httpx.HTTPStatusError as exc:
+                    log.warning(
+                        "GDELT intelligence fetch failed: status=%s",
+                        exc.response.status_code,
+                    )
                 except Exception as exc:
                     log.warning("GDELT intelligence fetch failed: %s", type(exc).__name__)
+
+            if not gdelt_events and settings.google_news_fallback_enabled:
+                try:
+                    fallback_events = await fetch_google_news_fallback(client)
+                    collected.extend(fallback_events)
+                    if fallback_events:
+                        log.info(
+                            "Google News fallback recovered %s event candidate(s)",
+                            len(fallback_events),
+                        )
+                except httpx.HTTPStatusError as exc:
+                    log.warning(
+                        "Google News fallback failed: status=%s",
+                        exc.response.status_code,
+                    )
+                except Exception as exc:
+                    log.warning("Google News fallback failed: %s", type(exc).__name__)
 
             now = datetime.now(timezone.utc)
             should_poll_crypto_calendar = (
@@ -833,7 +882,13 @@ async def intelligence_news_loop(state: WorkerState) -> None:
 
             _heartbeat("worker-intel", {
                 "last_news_poll": datetime.now(timezone.utc).isoformat(),
-                "sources": ["fed", "gdelt"] + (["coinmarketcal"] if settings.coinmarketcal_api_key.strip() else []),
+                "sources": (
+                    ["fed"]
+                    + (["coindesk_rss"] if settings.coindesk_rss_enabled else [])
+                    + (["gdelt"] if settings.gdelt_enabled else [])
+                    + (["google_news_fallback"] if settings.google_news_fallback_enabled else [])
+                    + (["coinmarketcal"] if settings.coinmarketcal_api_key.strip() else [])
+                ),
             })
             await asyncio.sleep(settings.intelligence_poll_seconds)
 
@@ -857,6 +912,12 @@ async def intelligence_calendar_loop() -> None:
                     "official calendars synchronized: %s event(s), %s new",
                     len(events),
                     len(created),
+                )
+            except httpx.HTTPStatusError as exc:
+                log.warning(
+                    "BLS calendar fetch failed: status=%s retry_after=%s",
+                    exc.response.status_code,
+                    exc.response.headers.get("retry-after"),
                 )
             except Exception as exc:
                 log.warning("BLS calendar fetch failed: %s", type(exc).__name__)
