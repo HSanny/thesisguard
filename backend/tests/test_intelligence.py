@@ -6,6 +6,7 @@ from backend.app.services.intelligence import (
     format_event_message,
     parse_bls_ics,
     parse_gdelt,
+    parse_google_news_rss,
     parse_fomc_calendar_html,
     source_tier,
     upcoming_stage,
@@ -188,3 +189,57 @@ def test_event_message_includes_market_context():
     assert "事件发生时相关加密资产价格" in text
     assert "Related crypto prices at alert time" in text
     assert "3 个数据源" in text
+
+
+def test_google_news_fallback_preserves_publisher_for_source_tier():
+    payload = """<?xml version="1.0"?>
+    <rss><channel><item>
+      <title>Reuters: Bitcoin market reacts to major regulatory decision</title>
+      <link>https://news.google.com/rss/articles/example</link>
+      <guid>google-news-example</guid>
+      <pubDate>Thu, 10 Sep 2026 00:30:00 GMT</pubDate>
+      <description>Bitcoin and crypto regulation update.</description>
+      <source url="https://www.reuters.com/">Reuters</source>
+    </item></channel></rss>
+    """
+    events = parse_google_news_rss(payload, topic="crypto")
+    assert len(events) == 1
+    assert events[0].source_name == "Reuters"
+    assert events[0].source_tier == 2
+    assert events[0].metadata["publisher_url"] == "https://www.reuters.com/"
+    assert "google_news_fallback" in events[0].themes
+
+
+def test_google_news_same_publisher_does_not_fake_independent_corroboration():
+    from backend.app.services.intelligence import NormalizedEvent
+
+    common = dict(
+        event_kind="news",
+        status="reported",
+        summary="",
+        source_name="CoinDesk",
+        source_tier=3,
+        confidence="medium",
+        importance=8.0,
+        affected_assets=["BTCUSDT"],
+        themes=["crypto"],
+    )
+    events = [
+        NormalizedEvent(
+            canonical_key="direct",
+            title="Bitcoin ETF approval changes institutional market access",
+            source_url="https://www.coindesk.com/story",
+            metadata={},
+            **common,
+        ),
+        NormalizedEvent(
+            canonical_key="google",
+            title="Bitcoin ETF approval changes institutional market access",
+            source_url="https://news.google.com/rss/articles/x",
+            metadata={"publisher_url": "https://www.coindesk.com/"},
+            **common,
+        ),
+    ]
+    annotate_corroboration(events)
+    assert events[0].metadata["corroboration_count"] == 1
+    assert events[1].metadata["corroboration_count"] == 1
